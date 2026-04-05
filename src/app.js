@@ -8,11 +8,13 @@ const deliveryRoutes = require("./routes/deliveryRoutes");
 const userManagementRoutes = require("./routes/userManagementRoutes");
 const posRoutes = require("./routes/posRoutes");
 const orderRoutes = require("./routes/orderRoutes");
+const { setupSwagger } = require("./config/swagger");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+setupSwagger(app);
 
 app.get("/", (req, res) => {
   res.status(200).json({ message: "SukiCart auth API is running" });
