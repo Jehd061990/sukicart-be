@@ -22,6 +22,8 @@ const swaggerDocument = {
     { name: "Users" },
     { name: "POS" },
     { name: "Orders" },
+    { name: "Sellers" },
+    { name: "Buyers" },
   ],
   components: {
     securitySchemes: {
@@ -263,6 +265,121 @@ const swaggerDocument = {
         type: "object",
         properties: {
           message: { type: "string" },
+        },
+      },
+      SellerRegisterRequest: {
+        type: "object",
+        required: [
+          "fullName",
+          "phoneNumber",
+          "email",
+          "password",
+          "storeName",
+          "storeType",
+          "acceptTerms",
+        ],
+        properties: {
+          fullName: { type: "string", example: "Juan Dela Cruz" },
+          phoneNumber: { type: "string", example: "09171234567" },
+          email: { type: "string", example: "seller@example.com" },
+          password: { type: "string", example: "seller1234" },
+          storeName: { type: "string", example: "Suki Gulayan" },
+          storeType: {
+            type: "string",
+            enum: ["Gulay", "Karne", "Isda", "Mixed"],
+            example: "Gulay",
+          },
+          marketLocation: { type: "string", example: "Carbon Market" },
+          exactAddress: {
+            type: "string",
+            example: "Stall 12, Block B, Cebu City",
+          },
+          dtiPermit: {
+            type: "string",
+            format: "binary",
+          },
+          validId: {
+            type: "string",
+            format: "binary",
+          },
+          handleOwnDelivery: { type: "boolean", example: false },
+          usePlatformRiders: { type: "boolean", example: true },
+          acceptTerms: { type: "boolean", example: true },
+        },
+      },
+      SellerRegisterResponse: {
+        type: "object",
+        properties: {
+          message: {
+            type: "string",
+            example: "Registration successful! Waiting for approval.",
+          },
+          user: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              email: { type: "string" },
+              role: { type: "string", example: "SELLER" },
+            },
+          },
+          seller: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              storeName: { type: "string" },
+              storeType: { type: "string" },
+              registrationStatus: { type: "string", example: "PENDING" },
+            },
+          },
+        },
+      },
+      BuyerRegisterRequest: {
+        type: "object",
+        required: [
+          "fullName",
+          "phoneNumber",
+          "password",
+          "barangay",
+          "streetAddress",
+        ],
+        properties: {
+          fullName: { type: "string", example: "Maria Santos" },
+          phoneNumber: { type: "string", example: "09171234567" },
+          email: { type: "string", example: "buyer@example.com" },
+          password: { type: "string", example: "buyer1234" },
+          city: { type: "string", example: "Davao" },
+          barangay: { type: "string", example: "Talomo" },
+          streetAddress: {
+            type: "string",
+            example: "Purok 3, Door 4",
+          },
+          landmark: { type: "string", example: "Near chapel" },
+          notes: { type: "string", example: "Leave at gate" },
+        },
+      },
+      BuyerRegisterResponse: {
+        type: "object",
+        properties: {
+          message: { type: "string", example: "Welcome! Start shopping now." },
+          user: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              name: { type: "string" },
+              email: { type: ["string", "null"] },
+              role: { type: "string", example: "BUYER" },
+            },
+          },
+          buyer: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              city: { type: "string" },
+              barangay: { type: "string" },
+              streetAddress: { type: "string" },
+            },
+          },
         },
       },
     },
@@ -826,6 +943,60 @@ const swaggerDocument = {
           401: { description: "Unauthorized" },
           403: { description: "Forbidden" },
           404: { description: "Order not found" },
+          500: { description: "Server error" },
+        },
+      },
+    },
+    "/api/sellers/register": {
+      post: {
+        tags: ["Sellers"],
+        summary: "Register seller and store profile",
+        requestBody: {
+          required: true,
+          content: {
+            "multipart/form-data": {
+              schema: { $ref: "#/components/schemas/SellerRegisterRequest" },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: "Seller registration submitted",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/SellerRegisterResponse" },
+              },
+            },
+          },
+          400: { description: "Validation error" },
+          409: { description: "Email already exists" },
+          500: { description: "Server error" },
+        },
+      },
+    },
+    "/api/buyers/register": {
+      post: {
+        tags: ["Buyers"],
+        summary: "Register buyer profile",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/BuyerRegisterRequest" },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: "Buyer registration successful",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/BuyerRegisterResponse" },
+              },
+            },
+          },
+          400: { description: "Validation error" },
+          409: { description: "Email already exists" },
           500: { description: "Server error" },
         },
       },

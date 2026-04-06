@@ -8,6 +8,8 @@ const deliveryRoutes = require("./routes/deliveryRoutes");
 const userManagementRoutes = require("./routes/userManagementRoutes");
 const posRoutes = require("./routes/posRoutes");
 const orderRoutes = require("./routes/orderRoutes");
+const sellerRoutes = require("./routes/sellerRoutes");
+const buyerRoutes = require("./routes/buyerRoutes");
 const { setupSwagger } = require("./config/swagger");
 
 const app = express();
@@ -27,6 +29,8 @@ app.use("/api/deliveries", deliveryRoutes);
 app.use("/api/users", userManagementRoutes);
 app.use("/api/pos", posRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/sellers", sellerRoutes);
+app.use("/api/buyers", buyerRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
