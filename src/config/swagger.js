@@ -16,6 +16,7 @@ const swaggerDocument = {
   tags: [
     { name: "Health" },
     { name: "Auth" },
+    { name: "Admin" },
     { name: "Protected" },
     { name: "Products" },
     { name: "Deliveries" },
@@ -51,6 +52,11 @@ const swaggerDocument = {
             enum: ["BUYER", "SELLER", "RIDER", "ADMIN"],
             example: "BUYER",
           },
+          status: {
+            type: "string",
+            enum: ["active", "inactive", "pending"],
+            example: "active",
+          },
         },
       },
       RegisterRequest: {
@@ -79,6 +85,14 @@ const swaggerDocument = {
         type: "object",
         properties: {
           message: { type: "string", example: "Login successful" },
+          accessToken: {
+            type: "string",
+            example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+          },
+          refreshToken: {
+            type: "string",
+            example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+          },
           token: {
             type: "string",
             example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
@@ -463,6 +477,40 @@ const swaggerDocument = {
         },
       },
     },
+    "/api/auth/refresh": {
+      post: {
+        tags: ["Auth"],
+        summary: "Refresh access token",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["refreshToken"],
+                properties: {
+                  refreshToken: {
+                    type: "string",
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: "Tokens refreshed",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/AuthSuccessResponse" },
+              },
+            },
+          },
+          401: { description: "Invalid refresh token" },
+        },
+      },
+    },
     "/api/auth/me": {
       get: {
         tags: ["Auth"],
@@ -501,6 +549,290 @@ const swaggerDocument = {
             },
           },
           401: { description: "Unauthorized" },
+        },
+      },
+    },
+    "/api/admin/dashboard-stats": {
+      get: {
+        tags: ["Admin"],
+        summary: "Get admin dashboard summary cards",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: "Dashboard metrics",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    totalUsers: { type: "number", example: 245 },
+                    totalSellers: { type: "number", example: 37 },
+                    totalOrders: { type: "number", example: 991 },
+                    totalRevenue: { type: "number", example: 125340.5 },
+                  },
+                },
+              },
+            },
+          },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden (admin only)" },
+        },
+      },
+    },
+    "/api/admin/users": {
+      get: {
+        tags: ["Admin"],
+        summary: "List all platform users",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Users list" },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden (admin only)" },
+        },
+      },
+    },
+    "/api/admin/sellers": {
+      get: {
+        tags: ["Admin"],
+        summary: "List seller registrations",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Sellers list" },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden (admin only)" },
+        },
+      },
+    },
+    "/api/admin/sellers/{sellerProfileId}": {
+      get: {
+        tags: ["Admin"],
+        summary: "View seller details",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "sellerProfileId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          200: { description: "Seller details" },
+          400: { description: "Invalid seller profile id" },
+          404: { description: "Seller not found" },
+        },
+      },
+    },
+    "/api/admin/sellers/{sellerProfileId}/status": {
+      patch: {
+        tags: ["Admin"],
+        summary: "Approve or reject seller registration",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "sellerProfileId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["status"],
+                properties: {
+                  status: {
+                    type: "string",
+                    enum: ["PENDING", "APPROVED", "REJECTED"],
+                    example: "APPROVED",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Status updated" },
+          400: { description: "Validation error" },
+          404: { description: "Seller not found" },
+        },
+      },
+    },
+    "/api/admin/riders": {
+      get: {
+        tags: ["Admin"],
+        summary: "List riders",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Riders list" },
+        },
+      },
+      post: {
+        tags: ["Admin"],
+        summary: "Create rider account",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["name", "email", "password", "phoneNumber"],
+                properties: {
+                  name: { type: "string", example: "Rider One" },
+                  email: { type: "string", example: "rider@example.com" },
+                  password: { type: "string", example: "rider1234" },
+                  phoneNumber: { type: "string", example: "09171234567" },
+                  isActive: { type: "boolean", example: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          201: { description: "Rider created" },
+          409: { description: "Email already exists" },
+        },
+      },
+    },
+    "/api/admin/riders/{userId}/toggle-active": {
+      patch: {
+        tags: ["Admin"],
+        summary: "Toggle rider active/inactive",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "userId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          200: { description: "Rider status updated" },
+          404: { description: "Rider not found" },
+        },
+      },
+    },
+    "/api/admin/riders/{userId}": {
+      delete: {
+        tags: ["Admin"],
+        summary: "Remove rider",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "userId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          200: { description: "Rider removed" },
+          404: { description: "Rider not found" },
+        },
+      },
+    },
+    "/api/admin/buyers": {
+      get: {
+        tags: ["Admin"],
+        summary: "List buyers",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "Buyers list" },
+        },
+      },
+    },
+    "/api/admin/buyers/{userId}/disable": {
+      patch: {
+        tags: ["Admin"],
+        summary: "Disable buyer account",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "userId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          200: { description: "Buyer disabled" },
+          404: { description: "Buyer not found" },
+        },
+      },
+    },
+    "/api/admin/orders": {
+      get: {
+        tags: ["Admin"],
+        summary: "List orders with optional status filter",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "status",
+            in: "query",
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "all",
+                "pending",
+                "accepted",
+                "preparing",
+                "out_for_delivery",
+                "delivered",
+              ],
+            },
+          },
+        ],
+        responses: {
+          200: { description: "Orders list" },
+          400: { description: "Invalid status" },
+        },
+      },
+    },
+    "/api/admin/orders/{orderId}/status": {
+      patch: {
+        tags: ["Admin"],
+        summary: "Update order status",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "orderId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["status"],
+                properties: {
+                  status: {
+                    type: "string",
+                    enum: [
+                      "pending",
+                      "accepted",
+                      "preparing",
+                      "out_for_delivery",
+                      "delivered",
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Order status updated" },
+          404: { description: "Order not found" },
         },
       },
     },

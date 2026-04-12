@@ -27,11 +27,41 @@ const userSchema = new mongoose.Schema(
       default: "BUYER",
       required: true,
     },
+    status: {
+      type: String,
+      enum: ["active", "inactive", "pending"],
+      default: "active",
+      index: true,
+    },
+    phoneNumber: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
   },
 );
+
+userSchema.pre("validate", function syncStatusAndIsActive(next) {
+  if (this.isModified("status")) {
+    this.isActive = this.status === "active";
+  } else if (this.isModified("isActive")) {
+    this.status = this.isActive ? "active" : "inactive";
+  }
+
+  next();
+});
 
 userSchema.pre("save", async function hashPassword(next) {
   if (!this.isModified("password")) {

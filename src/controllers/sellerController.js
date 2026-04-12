@@ -107,6 +107,7 @@ const registerSeller = async (req, res) => {
       email: normalizedEmail,
       password,
       role: "SELLER",
+      status: "pending",
     });
 
     const dtiPermitFile = req.files?.dtiPermit?.[0];

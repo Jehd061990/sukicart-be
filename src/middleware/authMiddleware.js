@@ -1,8 +1,8 @@
-const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const ROLES = require("../constants/roles");
+const { verifyAccessToken } = require("../utils/jwtTokens");
 
-const protect = async (req, res, next) => {
+const requireAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
@@ -11,13 +11,21 @@ const protect = async (req, res, next) => {
     }
 
     const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyAccessToken(token);
 
     const user = await User.findById(decoded.id).select("-password");
     if (!user) {
       return res
         .status(401)
         .json({ message: "Not authorized, user not found" });
+    }
+
+    if (user.status !== "active") {
+      return res
+        .status(403)
+        .json({
+          message: `Account is ${user.status}. Please contact support.`,
+        });
     }
 
     req.user = user;
@@ -43,9 +51,15 @@ const authorizeRoles = (...allowedRoles) => {
 const onlySeller = authorizeRoles(ROLES.SELLER);
 const onlyBuyer = authorizeRoles(ROLES.BUYER);
 const onlyRider = authorizeRoles(ROLES.RIDER);
-const onlyAdmin = authorizeRoles(ROLES.ADMIN);
+const requireAdmin = authorizeRoles(ROLES.ADMIN);
+
+// Backward-compatible aliases
+const protect = requireAuth;
+const onlyAdmin = requireAdmin;
 
 module.exports = {
+  requireAuth,
+  requireAdmin,
   protect,
   authorizeRoles,
   onlySeller,

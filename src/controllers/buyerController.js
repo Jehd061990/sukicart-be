@@ -39,6 +39,7 @@ const registerBuyer = async (req, res) => {
       email: normalizedEmail,
       password,
       role: "BUYER",
+      status: "active",
     });
 
     const buyerProfile = await BuyerProfile.create({
