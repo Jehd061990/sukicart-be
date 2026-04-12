@@ -486,6 +486,24 @@ const swaggerDocument = {
         },
       },
     },
+    "/api/auth/logout": {
+      post: {
+        tags: ["Auth"],
+        summary: "Logout current user",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: "Logout successful",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/MessageResponse" },
+              },
+            },
+          },
+          401: { description: "Unauthorized" },
+        },
+      },
+    },
     "/api/protected/admin-only": {
       get: {
         tags: ["Protected"],
