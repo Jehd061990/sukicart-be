@@ -17,6 +17,12 @@ const productSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
+      index: true,
+    },
     unit: {
       type: String,
       enum: ["kg", "pcs"],
@@ -43,6 +49,16 @@ const productSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
+
+productSchema.pre("validate", function syncStatusFromStock(next) {
+  if (Number(this.stock) <= 0) {
+    this.status = "inactive";
+  } else if (!this.status) {
+    this.status = "active";
+  }
+
+  next();
+});
 
 const Product = mongoose.model("Product", productSchema);
 

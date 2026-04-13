@@ -36,6 +36,24 @@ const itemSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const geoLocationSchema = new mongoose.Schema(
+  {
+    lat: {
+      type: Number,
+      default: null,
+    },
+    lng: {
+      type: Number,
+      default: null,
+    },
+    updatedAt: {
+      type: Date,
+      default: null,
+    },
+  },
+  { _id: false },
+);
+
 const orderSchema = new mongoose.Schema(
   {
     items: {
@@ -69,19 +87,22 @@ const orderSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    sellerLocation: {
+      type: geoLocationSchema,
+      default: () => ({ lat: null, lng: null, updatedAt: null }),
+    },
+    buyerLocation: {
+      type: geoLocationSchema,
+      default: () => ({ lat: null, lng: null, updatedAt: null }),
+    },
+    riderLocation: {
+      type: geoLocationSchema,
+      default: () => ({ lat: null, lng: null, updatedAt: null }),
+    },
+    // Backward-compatible alias consumed by older client screens.
     currentLocation: {
-      lat: {
-        type: Number,
-        default: null,
-      },
-      lng: {
-        type: Number,
-        default: null,
-      },
-      updatedAt: {
-        type: Date,
-        default: null,
-      },
+      type: geoLocationSchema,
+      default: () => ({ lat: null, lng: null, updatedAt: null }),
     },
     type: {
       type: String,
@@ -95,6 +116,10 @@ const orderSchema = new mongoose.Schema(
         "pending",
         "accepted",
         "preparing",
+        "ready_for_pickup",
+        "assigned_to_rider",
+        "arrived_at_seller",
+        "picked_up",
         "out_for_delivery",
         "delivered",
       ],

@@ -300,7 +300,7 @@ const getOrders = async (req, res) => {
       if (!ORDER_STATUSES.includes(String(status))) {
         return res.status(400).json({
           message:
-            "status must be one of pending, accepted, preparing, out_for_delivery, delivered",
+            "status must be one of pending, accepted, preparing, ready_for_pickup, assigned_to_rider, arrived_at_seller, picked_up, out_for_delivery, delivered",
         });
       }
 
@@ -339,7 +339,7 @@ const updateOrderStatus = async (req, res) => {
     if (!status || !ORDER_STATUSES.includes(String(status))) {
       return res.status(400).json({
         message:
-          "status must be one of pending, accepted, preparing, out_for_delivery, delivered",
+          "status must be one of pending, accepted, preparing, ready_for_pickup, assigned_to_rider, arrived_at_seller, picked_up, out_for_delivery, delivered",
       });
     }
 

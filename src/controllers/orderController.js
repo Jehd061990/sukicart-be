@@ -9,18 +9,81 @@ const {
   runInTransaction,
 } = require("../utils/inventory");
 const { getIo } = require("../socket");
+const { buildTrackingPayload } = require("../utils/tracking");
 
 const ORDER_STATUSES = [
   "pending",
   "accepted",
   "preparing",
+  "ready_for_pickup",
+  "assigned_to_rider",
+  "arrived_at_seller",
+  "picked_up",
   "out_for_delivery",
   "delivered",
 ];
 
+const RIDER_UPDATABLE_STATUSES = [
+  "arrived_at_seller",
+  "picked_up",
+  "out_for_delivery",
+  "delivered",
+];
+
+const isFiniteCoord = (value) => Number.isFinite(Number(value));
+
+const parseGeoLocation = (rawLocation) => {
+  if (!rawLocation || typeof rawLocation !== "object") {
+    return { lat: null, lng: null, updatedAt: null };
+  }
+
+  if (!isFiniteCoord(rawLocation.lat) || !isFiniteCoord(rawLocation.lng)) {
+    return { lat: null, lng: null, updatedAt: null };
+  }
+
+  return {
+    lat: Number(rawLocation.lat),
+    lng: Number(rawLocation.lng),
+    updatedAt: new Date(),
+  };
+};
+
+const canTrackOrder = (order, user) => {
+  const isAdmin = user.role === ROLES.ADMIN;
+  const isBuyer = order.buyerId && String(order.buyerId) === String(user._id);
+  const isSeller =
+    order.sellerId && String(order.sellerId) === String(user._id);
+  const isRider = order.riderId && String(order.riderId) === String(user._id);
+
+  return isAdmin || isBuyer || isSeller || isRider;
+};
+
+const emitTrackingUpdate = (order) => {
+  try {
+    const io = getIo();
+    const payload = buildTrackingPayload(order);
+
+    io.to(`order:${order._id}`).emit("order:trackingUpdated", payload);
+
+    if (order.buyerId) {
+      io.to(`user:${order.buyerId}`).emit("order:trackingUpdated", payload);
+    }
+
+    if (order.sellerId) {
+      io.to(`user:${order.sellerId}`).emit("order:trackingUpdated", payload);
+    }
+
+    if (order.riderId) {
+      io.to(`user:${order.riderId}`).emit("order:trackingUpdated", payload);
+    }
+  } catch (_socketError) {
+    // Ignore socket emission errors so API writes still complete.
+  }
+};
+
 const createOrder = async (req, res) => {
   try {
-    const { items } = req.body;
+    const { items, sellerLocation, buyerLocation } = req.body;
 
     const order = await runInTransaction(async (session) => {
       const mergedItems = mergeOrderItems(items);
@@ -75,6 +138,8 @@ const createOrder = async (req, res) => {
             total: Number(total.toFixed(2)),
             buyerId: req.user._id,
             sellerId: products[0].sellerId,
+            sellerLocation: parseGeoLocation(sellerLocation),
+            buyerLocation: parseGeoLocation(buyerLocation),
             type: "ONLINE",
             status: "pending",
           },
@@ -141,7 +206,7 @@ const updateOrderStatus = async (req, res) => {
     if (!status || !ORDER_STATUSES.includes(String(status))) {
       return res.status(400).json({
         message:
-          "status must be one of pending, accepted, preparing, out_for_delivery, delivered",
+          "status must be one of pending, accepted, preparing, ready_for_pickup, assigned_to_rider, arrived_at_seller, picked_up, out_for_delivery, delivered",
       });
     }
 
@@ -156,6 +221,7 @@ const updateOrderStatus = async (req, res) => {
 
     order.status = String(status);
     await order.save();
+    emitTrackingUpdate(order);
 
     return res.status(200).json({
       message: "Order status updated",
@@ -200,6 +266,11 @@ const assignRiderToOrder = async (req, res) => {
     }
 
     order.riderId = rider._id;
+
+    if (order.status === "ready_for_pickup" || order.status === "preparing") {
+      order.status = "assigned_to_rider";
+    }
+
     await order.save();
 
     try {
@@ -219,8 +290,118 @@ const assignRiderToOrder = async (req, res) => {
       // Ignore socket emission errors so assignment is still persisted.
     }
 
+    emitTrackingUpdate(order);
+
     return res.status(200).json({
       message: "Rider assigned successfully",
+      order,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const getOrderTracking = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const order = await Order.findById(orderId).select(
+      "status sellerLocation buyerLocation riderLocation currentLocation buyerId sellerId riderId updatedAt",
+    );
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (!canTrackOrder(order, req.user)) {
+      return res.status(403).json({ message: "Forbidden: not your order" });
+    }
+
+    return res.status(200).json({ order: buildTrackingPayload(order) });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const updateRiderLocation = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { lat, lng } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    if (!isFiniteCoord(lat) || !isFiniteCoord(lng)) {
+      return res.status(400).json({ message: "lat and lng are required" });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (!order.riderId || String(order.riderId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Forbidden: not your order" });
+    }
+
+    const nextLocation = {
+      lat: Number(lat),
+      lng: Number(lng),
+      updatedAt: new Date(),
+    };
+
+    order.riderLocation = nextLocation;
+    order.currentLocation = nextLocation;
+    await order.save();
+
+    emitTrackingUpdate(order);
+
+    return res.status(200).json({
+      message: "Rider location updated",
+      order: buildTrackingPayload(order),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const riderUpdateOrderStatus = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    if (!status || !RIDER_UPDATABLE_STATUSES.includes(String(status))) {
+      return res.status(400).json({
+        message:
+          "status must be one of arrived_at_seller, picked_up, out_for_delivery, delivered",
+      });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (!order.riderId || String(order.riderId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Forbidden: not your order" });
+    }
+
+    order.status = String(status);
+    await order.save();
+
+    emitTrackingUpdate(order);
+
+    return res.status(200).json({
+      message: "Order status updated",
       order,
     });
   } catch (error) {
@@ -233,5 +414,9 @@ module.exports = {
   sellerAcceptOrder,
   updateOrderStatus,
   assignRiderToOrder,
+  getOrderTracking,
+  updateRiderLocation,
+  riderUpdateOrderStatus,
+  buildTrackingPayload,
   ORDER_STATUSES,
 };

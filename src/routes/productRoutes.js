@@ -5,11 +5,13 @@ const {
   editProduct,
   deleteProduct,
   getAllProducts,
+  getSellerProducts,
 } = require("../controllers/productController");
 
 const router = express.Router();
 
 router.get("/", getAllProducts);
+router.get("/mine", protect, onlySeller, getSellerProducts);
 
 // Only SELLER can manage products
 router.post("/", protect, onlySeller, addProduct);
