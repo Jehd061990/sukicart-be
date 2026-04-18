@@ -1,12 +1,17 @@
 const express = require("express");
 const {
+  getMyOrders,
   createOrder,
   sellerAcceptOrder,
+  sellerDeclineOrder,
+  buyerCancelOrder,
   updateOrderStatus,
   assignRiderToOrder,
   getOrderTracking,
   updateRiderLocation,
   riderUpdateOrderStatus,
+  sellerGetPickupQr,
+  riderConfirmPickupQr,
 } = require("../controllers/orderController");
 const {
   protect,
@@ -18,8 +23,19 @@ const {
 
 const router = express.Router();
 
+// Role-aware endpoint for each signed-in user to view their own orders.
+router.get(
+  "/mine",
+  protect,
+  authorizeRoles("BUYER", "SELLER", "RIDER", "ADMIN"),
+  getMyOrders,
+);
+
 // Buyer creates ONLINE order
 router.post("/", protect, onlyBuyer, createOrder);
+
+// Buyer cancels pending order
+router.patch("/:orderId/cancel", protect, onlyBuyer, buyerCancelOrder);
 
 // Buyer, seller, assigned rider, or admin can read tracking details
 router.get(
@@ -32,6 +48,9 @@ router.get(
 // Seller accepts order
 router.patch("/:orderId/accept", protect, onlySeller, sellerAcceptOrder);
 
+// Seller declines order
+router.patch("/:orderId/decline", protect, onlySeller, sellerDeclineOrder);
+
 // Seller or admin assigns rider to order
 router.patch(
   "/:orderId/assign-rider",
@@ -43,12 +62,23 @@ router.patch(
 // Seller updates order status
 router.patch("/:orderId/status", protect, onlySeller, updateOrderStatus);
 
+// Seller gets pickup QR details for rider handoff
+router.get("/:orderId/pickup-qr", protect, onlySeller, sellerGetPickupQr);
+
 // Rider updates delivery status as order progresses in the field
 router.patch(
   "/:orderId/rider-status",
   protect,
   onlyRider,
   riderUpdateOrderStatus,
+);
+
+// Rider confirms pickup by scanning or manually typing seller QR code
+router.patch(
+  "/:orderId/confirm-pickup",
+  protect,
+  onlyRider,
+  riderConfirmPickupQr,
 );
 
 // Optional HTTP fallback for location updates (socket remains primary channel)

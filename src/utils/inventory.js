@@ -67,10 +67,25 @@ const runInTransaction = async (work) => {
 
   try {
     let result;
-    await session.withTransaction(async () => {
-      result = await work(session);
-    });
-    return result;
+    try {
+      await session.withTransaction(async () => {
+        result = await work(session);
+      });
+      return result;
+    } catch (error) {
+      const message = String(error?.message || "").toLowerCase();
+      const unsupportedTransactions =
+        message.includes("transaction numbers are only allowed") ||
+        message.includes("replica set") ||
+        message.includes("does not support transactions");
+
+      if (!unsupportedTransactions) {
+        throw error;
+      }
+
+      // Fallback for standalone MongoDB deployments where transactions are unavailable.
+      return work(undefined);
+    }
   } finally {
     await session.endSession();
   }

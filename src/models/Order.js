@@ -69,6 +69,11 @@ const orderSchema = new mongoose.Schema(
       required: true,
       min: 0,
     },
+    totalAmount: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
     buyerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -95,6 +100,10 @@ const orderSchema = new mongoose.Schema(
       type: geoLocationSchema,
       default: () => ({ lat: null, lng: null, updatedAt: null }),
     },
+    deliveryAddress: {
+      type: geoLocationSchema,
+      default: () => ({ lat: null, lng: null, updatedAt: null }),
+    },
     riderLocation: {
       type: geoLocationSchema,
       default: () => ({ lat: null, lng: null, updatedAt: null }),
@@ -114,7 +123,12 @@ const orderSchema = new mongoose.Schema(
       type: String,
       enum: [
         "pending",
+        "cancelled_by_buyer",
+        "declined_by_seller",
+        "searching_rider",
         "accepted",
+        "delivering",
+        "completed",
         "preparing",
         "ready_for_pickup",
         "assigned_to_rider",
@@ -125,6 +139,29 @@ const orderSchema = new mongoose.Schema(
       ],
       required: true,
       default: "pending",
+    },
+    sellerCancellationReason: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    pickupVerificationCode: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    pickupQrValue: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    pickupCodeIssuedAt: {
+      type: Date,
+      default: null,
+    },
+    pickupCodeVerifiedAt: {
+      type: Date,
+      default: null,
     },
   },
   {

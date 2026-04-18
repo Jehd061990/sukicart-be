@@ -8,12 +8,22 @@ const {
   safeReduceStock,
   runInTransaction,
 } = require("../utils/inventory");
+const {
+  assignRider,
+  clearAssignmentState,
+  updateRiderPresence,
+} = require("../services/riderAssignmentService");
 const { getIo } = require("../socket");
 const { buildTrackingPayload } = require("../utils/tracking");
 
 const ORDER_STATUSES = [
   "pending",
+  "cancelled_by_buyer",
+  "declined_by_seller",
+  "searching_rider",
   "accepted",
+  "delivering",
+  "completed",
   "preparing",
   "ready_for_pickup",
   "assigned_to_rider",
@@ -26,8 +36,10 @@ const ORDER_STATUSES = [
 const RIDER_UPDATABLE_STATUSES = [
   "arrived_at_seller",
   "picked_up",
+  "delivering",
   "out_for_delivery",
   "delivered",
+  "completed",
 ];
 
 const isFiniteCoord = (value) => Number.isFinite(Number(value));
@@ -46,6 +58,41 @@ const parseGeoLocation = (rawLocation) => {
     lng: Number(rawLocation.lng),
     updatedAt: new Date(),
   };
+};
+
+const generatePickupVerificationCode = () =>
+  String(Math.floor(100000 + Math.random() * 900000));
+
+const buildPickupQrValue = (orderId, code) =>
+  `SUKICART|${String(orderId)}|${String(code)}`;
+
+const ensurePickupCode = (order, { regenerate = false } = {}) => {
+  const needsNewCode =
+    regenerate || !order.pickupVerificationCode || !order.pickupQrValue;
+
+  if (!needsNewCode) {
+    return;
+  }
+
+  const code = generatePickupVerificationCode();
+  order.pickupVerificationCode = code;
+  order.pickupQrValue = buildPickupQrValue(order._id, code);
+  order.pickupCodeIssuedAt = new Date();
+  order.pickupCodeVerifiedAt = null;
+};
+
+const extractPickupCodeFromQr = (rawValue) => {
+  const value = String(rawValue || "").trim();
+  if (!value) {
+    return "";
+  }
+
+  const parts = value.split("|");
+  if (parts.length >= 3) {
+    return String(parts[2] || "").trim();
+  }
+
+  return value;
 };
 
 const canTrackOrder = (order, user) => {
@@ -81,11 +128,82 @@ const emitTrackingUpdate = (order) => {
   }
 };
 
+const normalizeOrderForClient = (order) => ({
+  id: String(order._id),
+  status: order.status,
+  type: order.type,
+  total: Number(order.total || 0),
+  createdAt: order.createdAt,
+  updatedAt: order.updatedAt,
+  pickupCodeIssuedAt: order.pickupCodeIssuedAt || null,
+  pickupCodeVerifiedAt: order.pickupCodeVerifiedAt || null,
+  hasPickupCode: Boolean(order.pickupVerificationCode),
+  sellerCancellationReason: order.sellerCancellationReason || "",
+  buyer: order.buyerId
+    ? {
+        id: String(order.buyerId._id || order.buyerId),
+        name: order.buyerId.name || "Buyer",
+      }
+    : null,
+  seller: order.sellerId
+    ? {
+        id: String(order.sellerId._id || order.sellerId),
+        name: order.sellerId.name || "Seller",
+      }
+    : null,
+  rider: order.riderId
+    ? {
+        id: String(order.riderId._id || order.riderId),
+        name: order.riderId.name || "Rider",
+      }
+    : null,
+  items: Array.isArray(order.items)
+    ? order.items.map((item) => ({
+        productId: String(item.productId),
+        name: item.name,
+        unit: item.unit,
+        price: Number(item.price || 0),
+        quantity: Number(item.quantity || 0),
+        lineTotal: Number(item.lineTotal || 0),
+      }))
+    : [],
+});
+
+const getMyOrders = async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit || 30), 1), 100);
+    const query = {};
+
+    if (req.user.role === ROLES.BUYER) {
+      query.buyerId = req.user._id;
+    } else if (req.user.role === ROLES.SELLER) {
+      query.sellerId = req.user._id;
+    } else if (req.user.role === ROLES.RIDER) {
+      query.riderId = req.user._id;
+    } else if (req.user.role !== ROLES.ADMIN) {
+      return res.status(403).json({ message: "Forbidden: unsupported role" });
+    }
+
+    const orders = await Order.find(query)
+      .populate("buyerId", "name")
+      .populate("sellerId", "name")
+      .populate("riderId", "name")
+      .sort({ createdAt: -1 })
+      .limit(limit);
+
+    return res.status(200).json({
+      orders: orders.map(normalizeOrderForClient),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 const createOrder = async (req, res) => {
   try {
     const { items, sellerLocation, buyerLocation } = req.body;
 
-    const order = await runInTransaction(async (session) => {
+    const createdOrders = await runInTransaction(async (session) => {
       const mergedItems = mergeOrderItems(items);
       const productIds = mergedItems.map((item) => item.productId);
       const products = await Product.find({ _id: { $in: productIds } }).session(
@@ -99,28 +217,18 @@ const createOrder = async (req, res) => {
       }
 
       const productById = new Map(products.map((p) => [String(p._id), p]));
-      const unifiedSellerId = String(products[0].sellerId);
-
-      for (const p of products) {
-        if (String(p.sellerId) !== unifiedSellerId) {
-          const error = new Error("All items must belong to one seller");
-          error.statusCode = 400;
-          throw error;
-        }
-      }
 
       const normalizedItems = [];
-      let total = 0;
 
       for (const mergedItem of mergedItems) {
         const product = productById.get(String(mergedItem.productId));
         const lineTotal = Number(
           (product.price * mergedItem.quantity).toFixed(2),
         );
-        total += lineTotal;
 
         normalizedItems.push({
           productId: product._id,
+          sellerId: product.sellerId,
           name: product.name,
           unit: product.unit,
           price: product.price,
@@ -131,28 +239,49 @@ const createOrder = async (req, res) => {
 
       await safeReduceStock(session, normalizedItems);
 
-      const [createdOrder] = await Order.create(
-        [
-          {
-            items: normalizedItems,
-            total: Number(total.toFixed(2)),
-            buyerId: req.user._id,
-            sellerId: products[0].sellerId,
-            sellerLocation: parseGeoLocation(sellerLocation),
-            buyerLocation: parseGeoLocation(buyerLocation),
-            type: "ONLINE",
-            status: "pending",
-          },
-        ],
-        { session },
-      );
+      const orderRowsBySellerId = new Map();
+      for (const item of normalizedItems) {
+        const sellerId = String(item.sellerId);
+        const prev = orderRowsBySellerId.get(sellerId) || {
+          sellerId: item.sellerId,
+          items: [],
+          total: 0,
+        };
 
-      return createdOrder;
+        prev.items.push({
+          productId: item.productId,
+          name: item.name,
+          unit: item.unit,
+          price: item.price,
+          quantity: item.quantity,
+          lineTotal: item.lineTotal,
+        });
+        prev.total += item.lineTotal;
+        orderRowsBySellerId.set(sellerId, prev);
+      }
+
+      const orderRows = [...orderRowsBySellerId.values()].map((row) => ({
+        items: row.items,
+        total: Number(row.total.toFixed(2)),
+        totalAmount: Number(row.total.toFixed(2)),
+        buyerId: req.user._id,
+        sellerId: row.sellerId,
+        sellerLocation: parseGeoLocation(sellerLocation),
+        buyerLocation: parseGeoLocation(buyerLocation),
+        deliveryAddress: parseGeoLocation(buyerLocation),
+        type: "ONLINE",
+        status: "pending",
+      }));
+
+      return Order.create(orderRows, { session });
     });
+
+    const primaryOrder = createdOrders[0];
 
     return res.status(201).json({
       message: "Order created successfully",
-      order,
+      order: primaryOrder,
+      orders: createdOrders,
     });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ message: error.message });
@@ -167,7 +296,7 @@ const sellerAcceptOrder = async (req, res) => {
       return res.status(400).json({ message: "Invalid order id" });
     }
 
-    const order = await Order.findById(orderId);
+    let order = await Order.findById(orderId);
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
@@ -176,17 +305,159 @@ const sellerAcceptOrder = async (req, res) => {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 
-    if (order.status !== "pending") {
+    if (!["pending", "searching_rider"].includes(order.status)) {
       return res.status(400).json({
-        message: "Only pending orders can be accepted",
+        message: "Only pending or searching_rider orders can be accepted",
       });
     }
+
+    clearAssignmentState(orderId);
 
     order.status = "accepted";
     await order.save();
 
     return res.status(200).json({
       message: "Order accepted",
+      order,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const sellerDeclineOrder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const reason = String(req.body?.reason || "").trim();
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    let order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (String(order.sellerId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Forbidden: not your order" });
+    }
+
+    const terminalStatuses = ["delivered", "completed", "declined_by_seller"];
+    if (terminalStatuses.includes(order.status)) {
+      return res.status(400).json({
+        message: "Order can no longer be declined",
+      });
+    }
+
+    if (!reason) {
+      return res.status(400).json({
+        message: "Cancellation reason is required",
+      });
+    }
+
+    clearAssignmentState(orderId);
+
+    if (order.riderId) {
+      await updateRiderPresence(order.riderId, {
+        isAvailable: true,
+        currentOrderId: null,
+      });
+      order.riderId = null;
+    }
+
+    order.status = "declined_by_seller";
+    order.sellerCancellationReason = reason;
+    await order.save();
+
+    try {
+      const io = getIo();
+      const payload = {
+        orderId: String(order._id),
+        status: order.status,
+        message: `Seller canceled order: ${reason}`,
+        sellerCancellationReason: reason,
+      };
+
+      if (order.buyerId) {
+        io.to(`user:${order.buyerId}`).emit("order_status_update", payload);
+      }
+      if (order.sellerId) {
+        io.to(`user:${order.sellerId}`).emit("order_status_update", payload);
+      }
+    } catch (_socketError) {
+      // Ignore socket emission errors for decline workflow.
+    }
+
+    emitTrackingUpdate(order);
+
+    return res.status(200).json({
+      message: "Order declined",
+      order,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const buyerCancelOrder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    let order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (String(order.buyerId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Forbidden: not your order" });
+    }
+
+    if (order.status !== "pending") {
+      return res.status(400).json({
+        message: "Only pending orders can be canceled",
+      });
+    }
+
+    clearAssignmentState(orderId);
+
+    if (order.riderId) {
+      await updateRiderPresence(order.riderId, {
+        isAvailable: true,
+        currentOrderId: null,
+      });
+      order.riderId = null;
+    }
+
+    order.status = "cancelled_by_buyer";
+    await order.save();
+
+    try {
+      const io = getIo();
+      const payload = {
+        orderId: String(order._id),
+        status: order.status,
+        message: "Buyer canceled the order",
+      };
+
+      if (order.buyerId) {
+        io.to(`user:${order.buyerId}`).emit("order_status_update", payload);
+      }
+      if (order.sellerId) {
+        io.to(`user:${order.sellerId}`).emit("order_status_update", payload);
+      }
+    } catch (_socketError) {
+      // Ignore socket emission errors for cancel workflow.
+    }
+
+    emitTrackingUpdate(order);
+
+    return res.status(200).json({
+      message: "Order canceled",
       order,
     });
   } catch (error) {
@@ -206,8 +477,59 @@ const updateOrderStatus = async (req, res) => {
     if (!status || !ORDER_STATUSES.includes(String(status))) {
       return res.status(400).json({
         message:
-          "status must be one of pending, accepted, preparing, ready_for_pickup, assigned_to_rider, arrived_at_seller, picked_up, out_for_delivery, delivered",
+          "status must be one of pending, cancelled_by_buyer, declined_by_seller, searching_rider, accepted, delivering, completed, preparing, ready_for_pickup, assigned_to_rider, arrived_at_seller, picked_up, out_for_delivery, delivered",
       });
+    }
+
+    let order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (String(order.sellerId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Forbidden: not your order" });
+    }
+
+    const nextStatus = String(status);
+    if (nextStatus === "ready_for_pickup") {
+      ensurePickupCode(order, { regenerate: true });
+    }
+
+    order.status = nextStatus;
+    await order.save();
+
+    if (nextStatus === "ready_for_pickup" && !order.riderId) {
+      await assignRider(order._id, { fallbackStatus: "ready_for_pickup" });
+      order = await Order.findById(orderId);
+    }
+
+    if (
+      order.riderId &&
+      (nextStatus === "delivered" || nextStatus === "completed")
+    ) {
+      await updateRiderPresence(order.riderId, {
+        isAvailable: true,
+        currentOrderId: null,
+      });
+    }
+
+    emitTrackingUpdate(order);
+
+    return res.status(200).json({
+      message: "Order status updated",
+      order,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const sellerGetPickupQr = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
     }
 
     const order = await Order.findById(orderId);
@@ -219,12 +541,97 @@ const updateOrderStatus = async (req, res) => {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 
-    order.status = String(status);
+    if (
+      !["ready_for_pickup", "assigned_to_rider", "arrived_at_seller"].includes(
+        order.status,
+      )
+    ) {
+      return res.status(400).json({
+        message:
+          "Pickup QR is available only for ready_for_pickup, assigned_to_rider, or arrived_at_seller orders",
+      });
+    }
+
+    ensurePickupCode(order);
     await order.save();
+
+    return res.status(200).json({
+      orderId: String(order._id),
+      status: order.status,
+      pickupVerificationCode: order.pickupVerificationCode,
+      pickupQrValue: order.pickupQrValue,
+      issuedAt: order.pickupCodeIssuedAt,
+      verifiedAt: order.pickupCodeVerifiedAt,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const riderConfirmPickupQr = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const manualCode = String(req.body?.pickupCode || "").trim();
+    const qrValue = String(req.body?.qrValue || "").trim();
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    if (!manualCode && !qrValue) {
+      return res.status(400).json({
+        message: "pickupCode or qrValue is required",
+      });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (!order.riderId || String(order.riderId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Forbidden: not your order" });
+    }
+
+    if (
+      !["ready_for_pickup", "assigned_to_rider", "arrived_at_seller"].includes(
+        order.status,
+      )
+    ) {
+      return res.status(400).json({
+        message: "Pickup verification is only allowed at seller pickup stage",
+      });
+    }
+
+    if (!order.pickupVerificationCode || !order.pickupQrValue) {
+      return res.status(400).json({
+        message: "Pickup QR has not been generated by seller yet",
+      });
+    }
+
+    const expectedCode = String(order.pickupVerificationCode);
+    const expectedQrValue = String(order.pickupQrValue);
+    const scannedCode = extractPickupCodeFromQr(qrValue);
+
+    const matchedByManual = Boolean(manualCode) && manualCode === expectedCode;
+    const matchedByQrValue = Boolean(qrValue) && qrValue === expectedQrValue;
+    const matchedByScannedCode =
+      Boolean(scannedCode) && scannedCode === expectedCode;
+
+    if (!matchedByManual && !matchedByQrValue && !matchedByScannedCode) {
+      return res.status(400).json({
+        message: "Invalid pickup QR code",
+      });
+    }
+
+    order.status = "out_for_delivery";
+    order.pickupCodeVerifiedAt = new Date();
+    await order.save();
+
     emitTrackingUpdate(order);
 
     return res.status(200).json({
-      message: "Order status updated",
+      message: "Pickup verified. Order is now out for delivery",
       order,
     });
   } catch (error) {
@@ -382,7 +789,7 @@ const riderUpdateOrderStatus = async (req, res) => {
     if (!status || !RIDER_UPDATABLE_STATUSES.includes(String(status))) {
       return res.status(400).json({
         message:
-          "status must be one of arrived_at_seller, picked_up, out_for_delivery, delivered",
+          "status must be one of arrived_at_seller, picked_up, delivering, out_for_delivery, delivered, completed",
       });
     }
 
@@ -398,6 +805,13 @@ const riderUpdateOrderStatus = async (req, res) => {
     order.status = String(status);
     await order.save();
 
+    if (order.riderId && (status === "delivered" || status === "completed")) {
+      await updateRiderPresence(order.riderId, {
+        isAvailable: true,
+        currentOrderId: null,
+      });
+    }
+
     emitTrackingUpdate(order);
 
     return res.status(200).json({
@@ -410,13 +824,18 @@ const riderUpdateOrderStatus = async (req, res) => {
 };
 
 module.exports = {
+  getMyOrders,
   createOrder,
   sellerAcceptOrder,
+  sellerDeclineOrder,
+  buyerCancelOrder,
   updateOrderStatus,
   assignRiderToOrder,
   getOrderTracking,
   updateRiderLocation,
   riderUpdateOrderStatus,
+  sellerGetPickupQr,
+  riderConfirmPickupQr,
   buildTrackingPayload,
   ORDER_STATUSES,
 };

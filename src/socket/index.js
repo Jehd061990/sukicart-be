@@ -4,6 +4,12 @@ const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const ROLES = require("../constants/roles");
 const { buildTrackingPayload } = require("../utils/tracking");
+const {
+  acceptOrderOffer,
+  declineOrderOffer,
+  setRiderAssignmentIo,
+  updateRiderPresence,
+} = require("../services/riderAssignmentService");
 
 let io;
 
@@ -14,6 +20,8 @@ const initSocket = (httpServer) => {
       methods: ["GET", "POST"],
     },
   });
+
+  setRiderAssignmentIo(io);
 
   io.use((socket, next) => {
     try {
@@ -42,6 +50,16 @@ const initSocket = (httpServer) => {
 
   io.on("connection", (socket) => {
     socket.join(`user:${socket.user.id}`);
+
+    if (socket.user.role === ROLES.ADMIN) {
+      socket.join("admins");
+    }
+
+    if (socket.user.role === ROLES.RIDER) {
+      updateRiderPresence(socket.user.id, {
+        isOnline: true,
+      }).catch(() => null);
+    }
 
     const handleRiderLocationUpdate = async (payload, callback) => {
       try {
@@ -210,8 +228,128 @@ const initSocket = (httpServer) => {
       }
     });
 
+    socket.on("rider_location_update", async (payload, callback) => {
+      try {
+        if (socket.user.role !== ROLES.RIDER) {
+          const err = new Error("Only riders can update location");
+          err.statusCode = 403;
+          throw err;
+        }
+
+        const lat = Number(payload?.lat);
+        const lng = Number(payload?.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+          const err = new Error("lat and lng must be valid numbers");
+          err.statusCode = 400;
+          throw err;
+        }
+
+        await updateRiderPresence(socket.user.id, {
+          currentLocation: { lat, lng },
+        });
+
+        if (typeof callback === "function") {
+          callback({ success: true });
+        }
+      } catch (error) {
+        if (typeof callback === "function") {
+          callback({
+            success: false,
+            message: error.message,
+            statusCode: error.statusCode || 500,
+          });
+        }
+      }
+    });
+
+    socket.on("accept_order", async (payload, callback) => {
+      try {
+        if (socket.user.role !== ROLES.RIDER) {
+          const err = new Error("Only riders can accept order requests");
+          err.statusCode = 403;
+          throw err;
+        }
+
+        const orderId = payload?.orderId;
+        if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
+          const err = new Error("Invalid orderId");
+          err.statusCode = 400;
+          throw err;
+        }
+
+        const result = await acceptOrderOffer({
+          orderId,
+          riderId: socket.user.id,
+        });
+
+        io.to(`user:${result.order.buyerId}`).emit("order:riderAssigned", {
+          orderId: String(result.order._id),
+          riderId: String(result.rider._id),
+        });
+
+        io.to(`user:${result.order.sellerId}`).emit("order:riderAssigned", {
+          orderId: String(result.order._id),
+          riderId: String(result.rider._id),
+        });
+
+        if (typeof callback === "function") {
+          callback({ success: true, orderId: String(result.order._id) });
+        }
+      } catch (error) {
+        if (typeof callback === "function") {
+          callback({
+            success: false,
+            message: error.message,
+            statusCode: error.statusCode || 500,
+          });
+        }
+      }
+    });
+
+    socket.on("decline_order", async (payload, callback) => {
+      try {
+        if (socket.user.role !== ROLES.RIDER) {
+          const err = new Error("Only riders can decline order requests");
+          err.statusCode = 403;
+          throw err;
+        }
+
+        const orderId = payload?.orderId;
+        if (!orderId || !mongoose.Types.ObjectId.isValid(orderId)) {
+          const err = new Error("Invalid orderId");
+          err.statusCode = 400;
+          throw err;
+        }
+
+        const result = await declineOrderOffer({
+          orderId,
+          riderId: socket.user.id,
+        });
+
+        if (typeof callback === "function") {
+          callback({ success: true, reassigned: result.reassigned });
+        }
+      } catch (error) {
+        if (typeof callback === "function") {
+          callback({
+            success: false,
+            message: error.message,
+            statusCode: error.statusCode || 500,
+          });
+        }
+      }
+    });
+
     socket.on("rider:updateLocation", handleRiderLocationUpdate);
     socket.on("update-location", handleRiderLocationUpdate);
+
+    socket.on("disconnect", () => {
+      if (socket.user.role === ROLES.RIDER) {
+        updateRiderPresence(socket.user.id, {
+          isOnline: false,
+        }).catch(() => null);
+      }
+    });
   });
 
   return io;

@@ -47,11 +47,52 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    riderMeta: {
+      isOnline: {
+        type: Boolean,
+        default: false,
+      },
+      isAvailable: {
+        type: Boolean,
+        default: true,
+      },
+      currentLocation: {
+        lat: {
+          type: Number,
+          default: null,
+        },
+        lng: {
+          type: Number,
+          default: null,
+        },
+        updatedAt: {
+          type: Date,
+          default: null,
+        },
+      },
+      currentOrderId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Order",
+        default: null,
+      },
+      rating: {
+        type: Number,
+        default: 4.5,
+        min: 0,
+        max: 5,
+      },
+    },
   },
   {
     timestamps: true,
   },
 );
+
+userSchema.index({
+  role: 1,
+  "riderMeta.isOnline": 1,
+  "riderMeta.isAvailable": 1,
+});
 
 userSchema.pre("validate", function syncStatusAndIsActive(next) {
   if (this.isModified("status")) {
