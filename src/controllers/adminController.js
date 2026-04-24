@@ -7,6 +7,11 @@ const ROLES = require("../constants/roles");
 const { ORDER_STATUSES } = require("./orderController");
 
 const SELLER_STATUSES = ["PENDING", "APPROVED", "REJECTED"];
+const SELLER_STATUS_TO_USER_STATUS = {
+  PENDING: "pending",
+  APPROVED: "active",
+  REJECTED: "inactive",
+};
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -121,6 +126,13 @@ const updateSellerStatus = async (req, res) => {
     }
 
     sellerProfile.registrationStatus = normalizedStatus;
+
+    const linkedUser = await User.findById(sellerProfile.userId);
+    if (linkedUser && linkedUser.role === ROLES.SELLER) {
+      linkedUser.status = SELLER_STATUS_TO_USER_STATUS[normalizedStatus];
+      await linkedUser.save();
+    }
+
     await sellerProfile.save();
 
     return res.status(200).json({
