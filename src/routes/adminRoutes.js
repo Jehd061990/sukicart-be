@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   getDashboardStats,
+  getRiderAssignments,
   getUsers,
   getSellers,
   getSellerDetails,
@@ -21,6 +22,8 @@ const router = express.Router();
 router.use(protect, onlyAdmin);
 
 router.get("/dashboard-stats", getDashboardStats);
+router.get("/rider-assignments", getRiderAssignments);
+router.get("/rider-assignments/:orderId", getRiderAssignments);
 router.get("/users", getUsers);
 
 router.get("/sellers", getSellers);

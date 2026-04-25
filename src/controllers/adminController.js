@@ -5,6 +5,9 @@ const SellerProfile = require("../models/SellerProfile");
 const BuyerProfile = require("../models/BuyerProfile");
 const ROLES = require("../constants/roles");
 const { ORDER_STATUSES } = require("./orderController");
+const {
+  getAssignmentStateSnapshot,
+} = require("../services/riderAssignmentService");
 
 const SELLER_STATUSES = ["PENDING", "APPROVED", "REJECTED"];
 const SELLER_STATUS_TO_USER_STATUS = {
@@ -50,6 +53,28 @@ const getUsers = async (_req, res) => {
       .sort({ createdAt: -1 });
 
     return res.status(200).json({ users });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const getRiderAssignments = async (req, res) => {
+  try {
+    const orderId = req.params.orderId || req.query.orderId || null;
+
+    if (orderId && !isValidObjectId(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    if (orderId) {
+      return res.status(200).json({
+        assignment: getAssignmentStateSnapshot(orderId),
+      });
+    }
+
+    return res.status(200).json({
+      assignments: getAssignmentStateSnapshot(),
+    });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -374,6 +399,7 @@ const updateOrderStatus = async (req, res) => {
 
 module.exports = {
   getDashboardStats,
+  getRiderAssignments,
   getUsers,
   getSellers,
   getSellerDetails,

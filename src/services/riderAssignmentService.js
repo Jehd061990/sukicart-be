@@ -5,7 +5,6 @@ const ROLES = require("../constants/roles");
 
 const OFFER_TIMEOUT_MS = 60_000;
 const MAX_NEAREST_RIDERS = 3;
-const MAX_RETRY_ROUNDS = 2;
 
 const assignmentState = new Map();
 let assignmentIo = null;
@@ -52,6 +51,43 @@ const clearAssignmentState = (orderId) => {
     clearTimeout(state.timer);
   }
   assignmentState.delete(key);
+};
+
+const serializeAssignmentState = (state) => {
+  if (!state) {
+    return null;
+  }
+
+  const remainingOfferMs = Number.isFinite(state.offerStartedAt)
+    ? Math.max(0, OFFER_TIMEOUT_MS - (Date.now() - state.offerStartedAt))
+    : null;
+
+  return {
+    orderId: state.orderId,
+    fallbackStatus: state.fallbackStatus,
+    currentIndex: state.currentIndex,
+    currentRiderId: state.candidates[state.currentIndex]
+      ? String(state.candidates[state.currentIndex].rider._id)
+      : null,
+    remainingOfferMs,
+    candidateCount: state.candidates.length,
+    candidates: state.candidates.map((entry, index) => ({
+      index,
+      riderId: String(entry.rider._id),
+      riderName: entry.rider.name || "",
+      distanceKm: Number(Number(entry.distanceKm || 0).toFixed(2)),
+    })),
+  };
+};
+
+const getAssignmentStateSnapshot = (orderId = null) => {
+  if (orderId) {
+    return serializeAssignmentState(
+      assignmentState.get(String(orderId)) || null,
+    );
+  }
+
+  return Array.from(assignmentState.values()).map(serializeAssignmentState);
 };
 
 const getPickupPoint = (order) => toCoord(order.sellerLocation);
@@ -140,11 +176,6 @@ const sendOfferToCurrentCandidate = async (orderId) => {
     return;
   }
 
-  const candidate = state.candidates[state.currentIndex];
-  if (!candidate) {
-    return;
-  }
-
   const order = await Order.findById(orderId).select(
     "_id buyerId sellerId items total totalAmount status buyerLocation deliveryAddress",
   );
@@ -157,63 +188,113 @@ const sendOfferToCurrentCandidate = async (orderId) => {
     return;
   }
 
-  assignmentIo.to(`user:${candidate.rider._id}`).emit("new_order_request", {
-    orderId: String(order._id),
-    buyerId: order.buyerId ? String(order.buyerId) : null,
-    sellerId: order.sellerId ? String(order.sellerId) : null,
-    items: order.items,
-    totalAmount: Number(order.totalAmount || order.total || 0),
-    pickupLocation: getPickupPoint(order) || getDeliveryPoint(order),
-    sellerLocation: getPickupPoint(order) || null,
-    deliveryAddress: getDeliveryPoint(order),
-    distanceKm: Number(candidate.distanceKm.toFixed(2)),
-    expiresInSec: OFFER_TIMEOUT_MS / 1000,
-  });
+  if (!Array.isArray(state.candidates) || state.candidates.length === 0) {
+    const refreshedCandidates = await pickNearbyCandidates(order, new Set());
+
+    if (!refreshedCandidates.length) {
+      order.status = state.fallbackStatus || "pending";
+      await order.save();
+      notifyOrderStatus(order, order.status, {
+        message: "No nearby riders available",
+      });
+      clearAssignmentState(orderId);
+      return;
+    }
+
+    state.candidates = refreshedCandidates;
+    state.currentIndex = 0;
+  }
+
+  const pickupPoint = getPickupPoint(order) || getDeliveryPoint(order);
+  let selectedCandidate = null;
+  let selectedIndex = state.currentIndex % state.candidates.length;
+
+  for (let attempts = 0; attempts < state.candidates.length; attempts += 1) {
+    const idx = (state.currentIndex + attempts) % state.candidates.length;
+    const candidate = state.candidates[idx];
+
+    const rider = await User.findOne({
+      _id: candidate.rider._id,
+      role: ROLES.RIDER,
+      status: "active",
+      "riderMeta.isOnline": true,
+      "riderMeta.isAvailable": true,
+    }).select("name riderMeta");
+
+    const riderPoint = toCoord(rider?.riderMeta?.currentLocation);
+    if (!rider || !riderPoint) {
+      continue;
+    }
+
+    selectedIndex = idx;
+    selectedCandidate = {
+      rider,
+      distanceKm: pickupPoint
+        ? haversineKm(pickupPoint, riderPoint)
+        : Number(candidate.distanceKm || 0),
+    };
+    break;
+  }
+
+  if (!selectedCandidate) {
+    const refreshedCandidates = await pickNearbyCandidates(order, new Set());
+    if (!refreshedCandidates.length) {
+      order.status = state.fallbackStatus || "pending";
+      await order.save();
+      notifyOrderStatus(order, order.status, {
+        message: "No nearby riders available",
+      });
+      clearAssignmentState(orderId);
+      return;
+    }
+
+    state.candidates = refreshedCandidates;
+    state.currentIndex = 0;
+    await sendOfferToCurrentCandidate(orderId);
+    return;
+  }
+
+  state.currentIndex = selectedIndex;
+
+  assignmentIo
+    .to(`user:${selectedCandidate.rider._id}`)
+    .emit("new_order_request", {
+      orderId: String(order._id),
+      buyerId: order.buyerId ? String(order.buyerId) : null,
+      sellerId: order.sellerId ? String(order.sellerId) : null,
+      items: order.items,
+      totalAmount: Number(order.totalAmount || order.total || 0),
+      pickupLocation: getPickupPoint(order) || getDeliveryPoint(order),
+      sellerLocation: getPickupPoint(order) || null,
+      deliveryAddress: getDeliveryPoint(order),
+      distanceKm: Number(selectedCandidate.distanceKm.toFixed(2)),
+      expiresInSec: OFFER_TIMEOUT_MS / 1000,
+    });
 
   if (state.timer) {
     clearTimeout(state.timer);
   }
 
-  state.timer = setTimeout(async () => {
-    state.responded.add(String(candidate.rider._id));
-    state.currentIndex += 1;
+  state.offerStartedAt = Date.now();
 
-    if (state.currentIndex < state.candidates.length) {
+  state.timer = setTimeout(async () => {
+    const freshState = assignmentState.get(String(orderId));
+    if (!freshState) {
+      return;
+    }
+
+    if (!freshState.candidates.length) {
       await sendOfferToCurrentCandidate(orderId);
       return;
     }
 
-    if (state.retryRound < MAX_RETRY_ROUNDS) {
-      state.retryRound += 1;
-      await assignRider(orderId, {
-        excludedRiderIds: state.responded,
-        retryRound: state.retryRound,
-        fallbackStatus: state.fallbackStatus,
-      });
-      return;
-    }
-
-    const freshOrder = await Order.findById(orderId);
-    if (freshOrder && !freshOrder.riderId) {
-      freshOrder.status = state.fallbackStatus || "pending";
-      await freshOrder.save();
-      notifyOrderStatus(freshOrder, freshOrder.status, {
-        message: "No rider accepted yet. Assignment will be retried manually.",
-      });
-    }
-
-    clearAssignmentState(orderId);
+    freshState.currentIndex =
+      (freshState.currentIndex + 1) % freshState.candidates.length;
+    await sendOfferToCurrentCandidate(orderId);
   }, OFFER_TIMEOUT_MS);
 };
 
-const assignRider = async (
-  orderId,
-  {
-    excludedRiderIds = new Set(),
-    retryRound = 0,
-    fallbackStatus = "pending",
-  } = {},
-) => {
+const assignRider = async (orderId, { fallbackStatus = "pending" } = {}) => {
   const order = await Order.findById(orderId);
   if (!order) {
     return { success: false, reason: "ORDER_NOT_FOUND" };
@@ -225,14 +306,17 @@ const assignRider = async (
   }
 
   const existingState = assignmentState.get(String(orderId));
-  const mergedExcluded = new Set(excludedRiderIds);
   if (existingState) {
-    for (const riderId of existingState.responded) {
-      mergedExcluded.add(String(riderId));
-    }
+    existingState.fallbackStatus = fallbackStatus;
+    return {
+      success: true,
+      offeredToRiderIds: existingState.candidates.map((entry) =>
+        String(entry.rider._id),
+      ),
+    };
   }
 
-  const candidates = await pickNearbyCandidates(order, mergedExcluded);
+  const candidates = await pickNearbyCandidates(order, new Set());
   if (!candidates.length) {
     order.status = fallbackStatus;
     await order.save();
@@ -250,10 +334,9 @@ const assignRider = async (
     orderId: String(orderId),
     candidates,
     currentIndex: 0,
-    retryRound,
     fallbackStatus,
-    responded: mergedExcluded,
     timer: null,
+    offerStartedAt: null,
   });
 
   await sendOfferToCurrentCandidate(orderId);
@@ -364,35 +447,23 @@ const declineOrderOffer = async ({ orderId, riderId }) => {
     throw new Error("This rider is not the current offer recipient");
   }
 
-  state.responded.add(String(riderId));
-  state.currentIndex += 1;
+  if (!state.candidates.length) {
+    const order = await Order.findById(orderId);
+    if (order && !order.riderId) {
+      order.status = state.fallbackStatus || "pending";
+      await order.save();
+      notifyOrderStatus(order, order.status, {
+        message: "No rider accepted the order",
+      });
+    }
 
-  if (state.currentIndex < state.candidates.length) {
-    await sendOfferToCurrentCandidate(orderId);
-    return { reassigned: true };
+    clearAssignmentState(orderId);
+    return { reassigned: false };
   }
 
-  if (state.retryRound < MAX_RETRY_ROUNDS) {
-    const nextRetry = state.retryRound + 1;
-    await assignRider(orderId, {
-      excludedRiderIds: state.responded,
-      retryRound: nextRetry,
-      fallbackStatus: state.fallbackStatus,
-    });
-    return { reassigned: true };
-  }
-
-  const order = await Order.findById(orderId);
-  if (order && !order.riderId) {
-    order.status = state.fallbackStatus || "pending";
-    await order.save();
-    notifyOrderStatus(order, order.status, {
-      message: "No rider accepted the order",
-    });
-  }
-
-  clearAssignmentState(orderId);
-  return { reassigned: false };
+  state.currentIndex = (state.currentIndex + 1) % state.candidates.length;
+  await sendOfferToCurrentCandidate(orderId);
+  return { reassigned: true };
 };
 
 const updateRiderPresence = async (riderId, updates = {}) => {
@@ -451,4 +522,5 @@ module.exports = {
   declineOrderOffer,
   updateRiderPresence,
   clearAssignmentState,
+  getAssignmentStateSnapshot,
 };
