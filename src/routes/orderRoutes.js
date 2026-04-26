@@ -9,6 +9,7 @@ const {
   assignRiderToOrder,
   getOrderTracking,
   updateRiderLocation,
+  updateSellerLocation,
   riderUpdateOrderStatus,
   sellerGetPickupQr,
   riderConfirmPickupQr,
@@ -82,6 +83,13 @@ router.patch(
 );
 
 // Optional HTTP fallback for location updates (socket remains primary channel)
+router.patch(
+  "/:orderId/seller-location",
+  protect,
+  onlySeller,
+  updateSellerLocation,
+);
+
 router.patch(
   "/:orderId/rider-location",
   protect,

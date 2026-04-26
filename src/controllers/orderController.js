@@ -789,6 +789,54 @@ const updateRiderLocation = async (req, res) => {
   }
 };
 
+const updateSellerLocation = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { lat, lng } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    if (!isFiniteCoord(lat) || !isFiniteCoord(lng)) {
+      return res.status(400).json({ message: "lat and lng are required" });
+    }
+
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    if (String(order.sellerId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Forbidden: not your order" });
+    }
+
+    if (isLocationHiddenStatus(order.status)) {
+      return res.status(400).json({
+        message:
+          "Location updates are disabled for completed or cancelled orders",
+      });
+    }
+
+    order.sellerLocation = {
+      lat: Number(lat),
+      lng: Number(lng),
+      updatedAt: new Date(),
+    };
+
+    await order.save();
+
+    emitTrackingUpdate(order);
+
+    return res.status(200).json({
+      message: "Seller location updated",
+      order: buildTrackingPayload(order),
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 const riderUpdateOrderStatus = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -845,6 +893,7 @@ module.exports = {
   assignRiderToOrder,
   getOrderTracking,
   updateRiderLocation,
+  updateSellerLocation,
   riderUpdateOrderStatus,
   sellerGetPickupQr,
   riderConfirmPickupQr,
