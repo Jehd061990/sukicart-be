@@ -410,8 +410,16 @@ const assignRider = async (orderId, { fallbackStatus = "pending" } = {}) => {
     return { success: false, reason: "NO_CANDIDATES" };
   }
 
-  order.status = "searching_rider";
-  await order.save();
+  const shouldMarkSearching = ![
+    "ready_for_pickup",
+    "assigned_to_rider",
+    "arrived_at_seller",
+  ].includes(String(order.status));
+
+  if (shouldMarkSearching) {
+    order.status = "searching_rider";
+    await order.save();
+  }
 
   assignmentState.set(String(orderId), {
     orderId: String(orderId),
@@ -423,7 +431,10 @@ const assignRider = async (orderId, { fallbackStatus = "pending" } = {}) => {
   });
 
   await sendOfferToCurrentCandidate(orderId);
-  notifyOrderStatus(order, "searching_rider");
+  notifyOrderStatus(
+    order,
+    shouldMarkSearching ? "searching_rider" : order.status,
+  );
 
   return {
     success: true,
@@ -470,7 +481,11 @@ const acceptOrderOffer = async ({ orderId, riderId }) => {
   }
 
   order.riderId = rider._id;
-  order.status = "accepted";
+  order.status = ["ready_for_pickup", "searching_rider"].includes(
+    String(order.status),
+  )
+    ? "assigned_to_rider"
+    : "accepted";
 
   if (!rider.riderMeta || typeof rider.riderMeta !== "object") {
     rider.riderMeta = {
@@ -507,7 +522,7 @@ const acceptOrderOffer = async ({ orderId, riderId }) => {
     });
   }
 
-  notifyOrderStatus(order, "accepted", {
+  notifyOrderStatus(order, order.status, {
     riderId: String(rider._id),
     riderName: rider.name,
   });
