@@ -226,7 +226,10 @@ const initSocket = (httpServer) => {
         socket.join(`order:${orderId}`);
 
         if (typeof callback === "function") {
-          callback({ success: true, data: buildTrackingPayload(order) });
+          callback({
+            success: true,
+            data: buildTrackingPayload(order, socket.user),
+          });
         }
       } catch (error) {
         if (typeof callback === "function") {

@@ -122,7 +122,33 @@ const notifyOrderStatus = (order, status, extraPayload = {}) => {
         .emit("order_status_update", payload);
     }
 
+    const orderChangedPayload = {
+      orderId: String(order._id),
+      status,
+      action: "status_changed",
+      updatedAt: order.updatedAt,
+    };
+
+    if (order.buyerId) {
+      assignmentIo
+        .to(`user:${order.buyerId}`)
+        .emit("order:changed", orderChangedPayload);
+    }
+
+    if (order.sellerId) {
+      assignmentIo
+        .to(`user:${order.sellerId}`)
+        .emit("order:changed", orderChangedPayload);
+    }
+
+    if (order.riderId) {
+      assignmentIo
+        .to(`user:${order.riderId}`)
+        .emit("order:changed", orderChangedPayload);
+    }
+
     assignmentIo.to("admins").emit("order_status_update", payload);
+    assignmentIo.to("admins").emit("order:changed", orderChangedPayload);
   } catch (_error) {
     // Socket failures must not block persistence flow.
   }

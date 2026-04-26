@@ -118,16 +118,56 @@ const emitTrackingUpdate = (order) => {
     io.to(`order:${order._id}`).emit("order:trackingUpdated", payload);
 
     if (order.buyerId) {
-      io.to(`user:${order.buyerId}`).emit("order:trackingUpdated", payload);
+      io.to(`user:${order.buyerId}`).emit(
+        "order:trackingUpdated",
+        buildTrackingPayload(order, { id: order.buyerId, role: ROLES.BUYER }),
+      );
     }
 
     if (order.sellerId) {
-      io.to(`user:${order.sellerId}`).emit("order:trackingUpdated", payload);
+      io.to(`user:${order.sellerId}`).emit(
+        "order:trackingUpdated",
+        buildTrackingPayload(order, {
+          id: order.sellerId,
+          role: ROLES.SELLER,
+        }),
+      );
     }
 
     if (order.riderId) {
-      io.to(`user:${order.riderId}`).emit("order:trackingUpdated", payload);
+      io.to(`user:${order.riderId}`).emit(
+        "order:trackingUpdated",
+        buildTrackingPayload(order, { id: order.riderId, role: ROLES.RIDER }),
+      );
     }
+  } catch (_socketError) {
+    // Ignore socket emission errors so API writes still complete.
+  }
+};
+
+const emitOrderChanged = (order, action = "updated") => {
+  try {
+    const io = getIo();
+    const payload = {
+      orderId: String(order._id),
+      status: order.status,
+      action,
+      updatedAt: order.updatedAt,
+    };
+
+    if (order.buyerId) {
+      io.to(`user:${order.buyerId}`).emit("order:changed", payload);
+    }
+
+    if (order.sellerId) {
+      io.to(`user:${order.sellerId}`).emit("order:changed", payload);
+    }
+
+    if (order.riderId) {
+      io.to(`user:${order.riderId}`).emit("order:changed", payload);
+    }
+
+    io.to("admins").emit("order:changed", payload);
   } catch (_socketError) {
     // Ignore socket emission errors so API writes still complete.
   }
@@ -283,6 +323,11 @@ const createOrder = async (req, res) => {
 
     const primaryOrder = createdOrders[0];
 
+    for (const createdOrder of createdOrders) {
+      emitTrackingUpdate(createdOrder);
+      emitOrderChanged(createdOrder, "created");
+    }
+
     return res.status(201).json({
       message: "Order created successfully",
       order: primaryOrder,
@@ -320,6 +365,9 @@ const sellerAcceptOrder = async (req, res) => {
 
     order.status = "accepted";
     await order.save();
+
+    emitTrackingUpdate(order);
+    emitOrderChanged(order, "status_changed");
 
     return res.status(200).json({
       message: "Order accepted",
@@ -395,6 +443,7 @@ const sellerDeclineOrder = async (req, res) => {
     }
 
     emitTrackingUpdate(order);
+    emitOrderChanged(order, "status_changed");
 
     return res.status(200).json({
       message: "Order declined",
@@ -460,6 +509,7 @@ const buyerCancelOrder = async (req, res) => {
     }
 
     emitTrackingUpdate(order);
+    emitOrderChanged(order, "status_changed");
 
     return res.status(200).json({
       message: "Order canceled",
@@ -519,6 +569,7 @@ const updateOrderStatus = async (req, res) => {
     }
 
     emitTrackingUpdate(order);
+    emitOrderChanged(order, "status_changed");
 
     return res.status(200).json({
       message: "Order status updated",
@@ -703,6 +754,7 @@ const assignRiderToOrder = async (req, res) => {
     }
 
     emitTrackingUpdate(order);
+    emitOrderChanged(order, "rider_assigned");
 
     return res.status(200).json({
       message: "Rider assigned successfully",
@@ -712,6 +764,7 @@ const assignRiderToOrder = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+emitOrderChanged(order, "status_changed");
 
 const getOrderTracking = async (req, res) => {
   try {
@@ -733,7 +786,9 @@ const getOrderTracking = async (req, res) => {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 
-    return res.status(200).json({ order: buildTrackingPayload(order) });
+    return res
+      .status(200)
+      .json({ order: buildTrackingPayload(order, req.user) });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -782,7 +837,7 @@ const updateRiderLocation = async (req, res) => {
 
     return res.status(200).json({
       message: "Rider location updated",
-      order: buildTrackingPayload(order),
+      order: buildTrackingPayload(order, req.user),
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -830,7 +885,7 @@ const updateSellerLocation = async (req, res) => {
 
     return res.status(200).json({
       message: "Seller location updated",
-      order: buildTrackingPayload(order),
+      order: buildTrackingPayload(order, req.user),
     });
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -873,6 +928,7 @@ const riderUpdateOrderStatus = async (req, res) => {
     }
 
     emitTrackingUpdate(order);
+    emitOrderChanged(order, "status_changed");
 
     return res.status(200).json({
       message: "Order status updated",
