@@ -16,6 +16,13 @@ const {
 
 let io;
 
+const TERMINAL_ORDER_STATUSES = [
+  "completed",
+  "delivered",
+  "cancelled_by_buyer",
+  "declined_by_seller",
+];
+
 const initSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
@@ -59,9 +66,22 @@ const initSocket = (httpServer) => {
     }
 
     if (socket.user.role === ROLES.RIDER) {
-      updateRiderPresence(socket.user.id, {
-        isOnline: true,
-      }).catch(() => null);
+      (async () => {
+        try {
+          const activeOrder = await Order.findOne({
+            riderId: socket.user.id,
+            status: { $nin: TERMINAL_ORDER_STATUSES },
+          }).select("_id");
+
+          await updateRiderPresence(socket.user.id, {
+            isOnline: true,
+            isAvailable: !activeOrder,
+            currentOrderId: activeOrder ? activeOrder._id : null,
+          });
+        } catch {
+          // Keep socket connection healthy even if presence sync fails.
+        }
+      })();
     }
 
     const handleRiderLocationUpdate = async (payload, callback) => {
