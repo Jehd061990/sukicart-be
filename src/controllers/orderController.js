@@ -89,7 +89,11 @@ const ensurePickupCode = (order, { regenerate = false } = {}) => {
 const canUsePickupQrStage = (order) => {
   const status = String(order?.status || "");
 
-  if (["ready_for_pickup", "assigned_to_rider", "arrived_at_seller"].includes(status)) {
+  if (
+    ["ready_for_pickup", "assigned_to_rider", "arrived_at_seller"].includes(
+      status,
+    )
+  ) {
     return true;
   }
 
