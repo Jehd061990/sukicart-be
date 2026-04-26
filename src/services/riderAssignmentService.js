@@ -108,6 +108,23 @@ const getDeliveryPoint = (order) =>
   toCoord(order.buyerLocation) ||
   toCoord(order.sellerLocation);
 
+const buildOfferPayload = (
+  order,
+  distanceKm,
+  expiresInSec = OFFER_TIMEOUT_MS / 1000,
+) => ({
+  orderId: String(order._id),
+  buyerId: order.buyerId ? String(order.buyerId) : null,
+  sellerId: order.sellerId ? String(order.sellerId) : null,
+  items: order.items,
+  totalAmount: Number(order.totalAmount || order.total || 0),
+  pickupLocation: getPickupPoint(order) || getDeliveryPoint(order),
+  sellerLocation: getPickupPoint(order) || null,
+  deliveryAddress: getDeliveryPoint(order),
+  distanceKm: Number(Number(distanceKm || 0).toFixed(2)),
+  expiresInSec,
+});
+
 const notifyOrderStatus = (order, status, extraPayload = {}) => {
   try {
     if (!assignmentIo) {
@@ -328,18 +345,14 @@ const sendOfferToCurrentCandidate = async (orderId) => {
 
   assignmentIo
     .to(`user:${selectedCandidate.rider._id}`)
-    .emit("new_order_request", {
-      orderId: String(order._id),
-      buyerId: order.buyerId ? String(order.buyerId) : null,
-      sellerId: order.sellerId ? String(order.sellerId) : null,
-      items: order.items,
-      totalAmount: Number(order.totalAmount || order.total || 0),
-      pickupLocation: getPickupPoint(order) || getDeliveryPoint(order),
-      sellerLocation: getPickupPoint(order) || null,
-      deliveryAddress: getDeliveryPoint(order),
-      distanceKm: Number(selectedCandidate.distanceKm.toFixed(2)),
-      expiresInSec: OFFER_TIMEOUT_MS / 1000,
-    });
+    .emit(
+      "new_order_request",
+      buildOfferPayload(
+        order,
+        selectedCandidate.distanceKm,
+        OFFER_TIMEOUT_MS / 1000,
+      ),
+    );
 
   if (state.timer) {
     clearTimeout(state.timer);
@@ -613,6 +626,53 @@ const updateRiderPresence = async (riderId, updates = {}) => {
   return rider;
 };
 
+const getPendingOfferForRider = async (riderId) => {
+  const riderKey = String(riderId || "");
+  if (!riderKey) {
+    return null;
+  }
+
+  for (const state of assignmentState.values()) {
+    if (
+      !state ||
+      !Array.isArray(state.candidates) ||
+      !state.candidates.length
+    ) {
+      continue;
+    }
+
+    const currentIndex = state.currentIndex % state.candidates.length;
+    const currentCandidate = state.candidates[currentIndex];
+    if (!currentCandidate) {
+      continue;
+    }
+
+    if (String(currentCandidate.rider._id) !== riderKey) {
+      continue;
+    }
+
+    const order = await Order.findById(state.orderId).select(
+      "_id buyerId sellerId items total totalAmount status buyerLocation deliveryAddress sellerLocation",
+    );
+    if (!order) {
+      continue;
+    }
+
+    const remainingMs = Number.isFinite(state.offerStartedAt)
+      ? Math.max(0, OFFER_TIMEOUT_MS - (Date.now() - state.offerStartedAt))
+      : OFFER_TIMEOUT_MS;
+
+    const expiresInSec = Math.max(1, Math.ceil(remainingMs / 1000));
+    return buildOfferPayload(
+      order,
+      Number(currentCandidate.distanceKm || 0),
+      expiresInSec,
+    );
+  }
+
+  return null;
+};
+
 module.exports = {
   setRiderAssignmentIo,
   assignRider,
@@ -621,4 +681,5 @@ module.exports = {
   updateRiderPresence,
   clearAssignmentState,
   getAssignmentStateSnapshot,
+  getPendingOfferForRider,
 };

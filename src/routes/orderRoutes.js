@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   getMyOrders,
+  getMyPendingRiderOffer,
   createOrder,
   sellerAcceptOrder,
   sellerDeclineOrder,
@@ -31,6 +32,8 @@ router.get(
   authorizeRoles("BUYER", "SELLER", "RIDER", "ADMIN"),
   getMyOrders,
 );
+
+router.get("/rider/pending-offer", protect, onlyRider, getMyPendingRiderOffer);
 
 // Buyer creates ONLINE order
 router.post("/", protect, onlyBuyer, createOrder);

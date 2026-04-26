@@ -11,6 +11,7 @@ const {
 const {
   assignRider,
   clearAssignmentState,
+  getPendingOfferForRider,
   updateRiderPresence,
 } = require("../services/riderAssignmentService");
 const { getIo } = require("../socket");
@@ -254,6 +255,15 @@ const getMyOrders = async (req, res) => {
     return res.status(200).json({
       orders: orders.map(normalizeOrderForClient),
     });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const getMyPendingRiderOffer = async (req, res) => {
+  try {
+    const offer = await getPendingOfferForRider(req.user._id);
+    return res.status(200).json({ offer });
   } catch (error) {
     return res.status(500).json({ message: error.message });
   }
@@ -947,6 +957,7 @@ const riderUpdateOrderStatus = async (req, res) => {
 
 module.exports = {
   getMyOrders,
+  getMyPendingRiderOffer,
   createOrder,
   sellerAcceptOrder,
   sellerDeclineOrder,
