@@ -14,7 +14,10 @@ const {
   updateRiderPresence,
 } = require("../services/riderAssignmentService");
 const { getIo } = require("../socket");
-const { buildTrackingPayload } = require("../utils/tracking");
+const {
+  buildTrackingPayload,
+  isLocationHiddenStatus,
+} = require("../utils/tracking");
 
 const ORDER_STATUSES = [
   "pending",
@@ -756,6 +759,13 @@ const updateRiderLocation = async (req, res) => {
 
     if (!order.riderId || String(order.riderId) !== String(req.user._id)) {
       return res.status(403).json({ message: "Forbidden: not your order" });
+    }
+
+    if (isLocationHiddenStatus(order.status)) {
+      return res.status(400).json({
+        message:
+          "Location updates are disabled for completed or cancelled orders",
+      });
     }
 
     const nextLocation = {

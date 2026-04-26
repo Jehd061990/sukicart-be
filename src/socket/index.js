@@ -3,7 +3,10 @@ const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const ROLES = require("../constants/roles");
-const { buildTrackingPayload } = require("../utils/tracking");
+const {
+  buildTrackingPayload,
+  isLocationHiddenStatus,
+} = require("../utils/tracking");
 const {
   acceptOrderOffer,
   declineOrderOffer,
@@ -98,6 +101,14 @@ const initSocket = (httpServer) => {
         ) {
           const err = new Error("Rider not assigned to this order");
           err.statusCode = 403;
+          throw err;
+        }
+
+        if (isLocationHiddenStatus(order.status)) {
+          const err = new Error(
+            "Location updates are disabled for completed or cancelled orders",
+          );
+          err.statusCode = 400;
           throw err;
         }
 
