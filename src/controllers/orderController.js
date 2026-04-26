@@ -86,6 +86,17 @@ const ensurePickupCode = (order, { regenerate = false } = {}) => {
   order.pickupCodeVerifiedAt = null;
 };
 
+const canUsePickupQrStage = (order) => {
+  const status = String(order?.status || "");
+
+  if (["ready_for_pickup", "assigned_to_rider", "arrived_at_seller"].includes(status)) {
+    return true;
+  }
+
+  // Backward compatibility: older flows may still keep rider-assigned pickup orders as "accepted".
+  return status === "accepted" && Boolean(order?.riderId);
+};
+
 const extractPickupCodeFromQr = (rawValue) => {
   const value = String(rawValue || "").trim();
   if (!value) {
@@ -597,14 +608,10 @@ const sellerGetPickupQr = async (req, res) => {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 
-    if (
-      !["ready_for_pickup", "assigned_to_rider", "arrived_at_seller"].includes(
-        order.status,
-      )
-    ) {
+    if (!canUsePickupQrStage(order)) {
       return res.status(400).json({
         message:
-          "Pickup QR is available only for ready_for_pickup, assigned_to_rider, or arrived_at_seller orders",
+          "Pickup QR is available only for ready_for_pickup, assigned_to_rider, arrived_at_seller, or accepted orders with rider assigned",
       });
     }
 
@@ -649,11 +656,7 @@ const riderConfirmPickupQr = async (req, res) => {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 
-    if (
-      !["ready_for_pickup", "assigned_to_rider", "arrived_at_seller"].includes(
-        order.status,
-      )
-    ) {
+    if (!canUsePickupQrStage(order)) {
       return res.status(400).json({
         message: "Pickup verification is only allowed at seller pickup stage",
       });
