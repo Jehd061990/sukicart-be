@@ -764,7 +764,6 @@ const assignRiderToOrder = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-emitOrderChanged(order, "status_changed");
 
 const getOrderTracking = async (req, res) => {
   try {
