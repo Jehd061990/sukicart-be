@@ -30,6 +30,7 @@ const ORDER_STATUSES = [
   "arrived_at_seller",
   "picked_up",
   "out_for_delivery",
+  "arrived_at_buyer",
   "delivered",
 ];
 
@@ -38,6 +39,7 @@ const RIDER_UPDATABLE_STATUSES = [
   "picked_up",
   "delivering",
   "out_for_delivery",
+  "arrived_at_buyer",
   "delivered",
   "completed",
 ];
@@ -789,7 +791,7 @@ const riderUpdateOrderStatus = async (req, res) => {
     if (!status || !RIDER_UPDATABLE_STATUSES.includes(String(status))) {
       return res.status(400).json({
         message:
-          "status must be one of arrived_at_seller, picked_up, delivering, out_for_delivery, delivered, completed",
+          "status must be one of arrived_at_seller, picked_up, delivering, out_for_delivery, arrived_at_buyer, delivered, completed",
       });
     }
 

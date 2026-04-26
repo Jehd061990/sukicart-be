@@ -135,6 +135,7 @@ const orderSchema = new mongoose.Schema(
         "arrived_at_seller",
         "picked_up",
         "out_for_delivery",
+        "arrived_at_buyer",
         "delivered",
       ],
       required: true,

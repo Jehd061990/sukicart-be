@@ -1,5 +1,7 @@
 const isAfterPickup = (status) =>
-  ["picked_up", "out_for_delivery", "delivered"].includes(String(status));
+  ["picked_up", "out_for_delivery", "arrived_at_buyer", "delivered"].includes(
+    String(status),
+  );
 
 const buildTrackingPayload = (orderDoc) => {
   const order =
