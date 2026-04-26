@@ -5,6 +5,17 @@ const ROLES = require("../constants/roles");
 
 const OFFER_TIMEOUT_MS = 60_000;
 const MAX_NEAREST_RIDERS = 3;
+const isAssignmentDebugEnabled =
+  String(process.env.DEBUG_RIDER_ASSIGNMENT || "").toLowerCase() === "true";
+
+const debugAssignment = (...args) => {
+  if (!isAssignmentDebugEnabled) {
+    return;
+  }
+
+  // Keep logs concise and prefixed for easy filtering.
+  console.log("[rider-assignment]", ...args);
+};
 
 const assignmentState = new Map();
 let assignmentIo = null;
@@ -156,10 +167,6 @@ const notifyOrderStatus = (order, status, extraPayload = {}) => {
 
 const pickNearbyCandidates = async (order, excludedRiderIds) => {
   const pickupPoint = getPickupPoint(order) || getDeliveryPoint(order);
-  if (!pickupPoint) {
-    return [];
-  }
-
   const riders = await User.find({
     role: ROLES.RIDER,
     status: "active",
@@ -172,14 +179,14 @@ const pickNearbyCandidates = async (order, excludedRiderIds) => {
     },
   }).select("name riderMeta");
 
-  return riders
+  const candidatesWithLocation = riders
     .map((rider) => {
       const riderPoint = toCoord(rider.riderMeta?.currentLocation);
       if (!riderPoint) {
         return null;
       }
 
-      const distanceKm = haversineKm(pickupPoint, riderPoint);
+      const distanceKm = pickupPoint ? haversineKm(pickupPoint, riderPoint) : 0;
       const rating = Number(rider.riderMeta?.rating || 0);
 
       // Nearest-first priority with slight bonus for higher rating.
@@ -194,6 +201,34 @@ const pickNearbyCandidates = async (order, excludedRiderIds) => {
     .filter(Boolean)
     .sort((a, b) => a.score - b.score)
     .slice(0, MAX_NEAREST_RIDERS);
+
+  if (candidatesWithLocation.length) {
+    debugAssignment("using nearby candidates", {
+      orderId: String(order._id),
+      count: candidatesWithLocation.length,
+      hasPickupPoint: Boolean(pickupPoint),
+    });
+    return candidatesWithLocation;
+  }
+
+  // Fallback: still offer to online available riders even if GPS is missing.
+  const fallbackCandidates = riders
+    .map((rider) => ({
+      rider,
+      distanceKm: 0,
+      score: -Number(rider.riderMeta?.rating || 0),
+    }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, MAX_NEAREST_RIDERS);
+
+  debugAssignment("using fallback candidates", {
+    orderId: String(order._id),
+    count: fallbackCandidates.length,
+    reason: "missing rider coordinates or pickup point",
+    hasPickupPoint: Boolean(pickupPoint),
+  });
+
+  return fallbackCandidates;
 };
 
 const sendOfferToCurrentCandidate = async (orderId) => {
@@ -248,16 +283,17 @@ const sendOfferToCurrentCandidate = async (orderId) => {
     }).select("name riderMeta");
 
     const riderPoint = toCoord(rider?.riderMeta?.currentLocation);
-    if (!rider || !riderPoint) {
+    if (!rider) {
       continue;
     }
 
     selectedIndex = idx;
     selectedCandidate = {
       rider,
-      distanceKm: pickupPoint
-        ? haversineKm(pickupPoint, riderPoint)
-        : Number(candidate.distanceKm || 0),
+      distanceKm:
+        pickupPoint && riderPoint
+          ? haversineKm(pickupPoint, riderPoint)
+          : Number(candidate.distanceKm || 0),
     };
     break;
   }
@@ -281,6 +317,14 @@ const sendOfferToCurrentCandidate = async (orderId) => {
   }
 
   state.currentIndex = selectedIndex;
+
+  debugAssignment("sending offer", {
+    orderId: String(order._id),
+    riderId: String(selectedCandidate.rider._id),
+    distanceKm: Number(selectedCandidate.distanceKm || 0),
+    candidateIndex: selectedIndex,
+    candidatePoolSize: state.candidates.length,
+  });
 
   assignmentIo
     .to(`user:${selectedCandidate.rider._id}`)
@@ -310,12 +354,25 @@ const sendOfferToCurrentCandidate = async (orderId) => {
     }
 
     if (!freshState.candidates.length) {
+      debugAssignment("offer timed out, retrying with refreshed candidates", {
+        orderId: String(orderId),
+      });
       await sendOfferToCurrentCandidate(orderId);
       return;
     }
 
-    freshState.currentIndex =
+    const previousIndex = freshState.currentIndex;
+    const nextIndex =
       (freshState.currentIndex + 1) % freshState.candidates.length;
+
+    debugAssignment("offer timed out, rotating rider", {
+      orderId: String(orderId),
+      fromIndex: previousIndex,
+      toIndex: nextIndex,
+      candidatePoolSize: freshState.candidates.length,
+    });
+
+    freshState.currentIndex = nextIndex;
     await sendOfferToCurrentCandidate(orderId);
   }, OFFER_TIMEOUT_MS);
 };
