@@ -1,7 +1,11 @@
 const User = require("../models/User");
 const SellerProfile = require("../models/SellerProfile");
+const {
+  getSupportedStoreTypes,
+  normalizeStoreType,
+} = require("../config/storeTypeConfig");
 
-const ALLOWED_STORE_TYPES = ["Gulay", "Karne", "Isda", "Mixed"];
+const ALLOWED_STORE_TYPES = getSupportedStoreTypes();
 
 const toBoolean = (value, fallback = false) => {
   if (typeof value === "boolean") {
@@ -71,9 +75,11 @@ const registerSeller = async (req, res) => {
       });
     }
 
-    if (!ALLOWED_STORE_TYPES.includes(String(storeType))) {
+    const normalizedStoreType = normalizeStoreType(storeType);
+
+    if (!ALLOWED_STORE_TYPES.includes(normalizedStoreType)) {
       return res.status(400).json({
-        message: "storeType must be one of Gulay, Karne, Isda, Mixed",
+        message: `storeType must be one of ${ALLOWED_STORE_TYPES.join(", ")}`,
       });
     }
 
@@ -122,7 +128,7 @@ const registerSeller = async (req, res) => {
       fullName: String(fullName).trim(),
       phoneNumber: String(phoneNumber).trim(),
       storeName: String(storeName).trim(),
-      storeType: String(storeType),
+      storeType: normalizedStoreType,
       marketLocation: marketLocation ? String(marketLocation).trim() : "",
       exactAddress: exactAddress ? String(exactAddress).trim() : "",
       dtiPermit: getUploadMeta(dtiPermitFile),

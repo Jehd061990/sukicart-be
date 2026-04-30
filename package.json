@@ -7,6 +7,10 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "seed:admin": "tsx scripts/seedAdmin.ts",
+    "migrate:product-metadata": "node scripts/backfillProductMetadata.js",
+    "migrate:product-metadata:dry-run": "node scripts/backfillProductMetadata.js --dry-run",
+    "smoke:migration": "node scripts/postMigrationSmokeTest.js",
+    "smoke:migration:api": "node scripts/postMigrationSmokeTest.js",
     "test": "jest --runInBand",
     "test:watch": "jest --watch"
   },

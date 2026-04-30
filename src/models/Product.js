@@ -44,9 +44,26 @@ const productSchema = new mongoose.Schema(
       default: "",
       trim: true,
     },
+    barcode: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    expiryDate: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
+  },
+);
+
+productSchema.index(
+  { sellerId: 1, barcode: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { barcode: { $exists: true, $ne: "" } },
   },
 );
 

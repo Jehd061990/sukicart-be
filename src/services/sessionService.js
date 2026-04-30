@@ -5,6 +5,7 @@ const SellerProfile = require("../models/SellerProfile");
 const POSSubscription = require("../models/POSSubscription");
 const Session = require("../models/Session");
 const ROLES = require("../constants/roles");
+const { normalizeStoreType } = require("../config/storeTypeConfig");
 
 const DEFAULT_POS_SLOTS = 1;
 
@@ -30,6 +31,12 @@ const resolveOwnerIdForUser = (user) =>
 const ensureStoreForOwner = async (ownerUser) => {
   const existingStore = await Store.findOne({ ownerId: ownerUser._id });
   if (existingStore) {
+    if (!existingStore.storeType) {
+      const sellerProfile = await SellerProfile.findOne({ userId: ownerUser._id });
+      existingStore.storeType = normalizeStoreType(sellerProfile?.storeType);
+      await existingStore.save();
+    }
+
     return existingStore;
   }
 
@@ -40,6 +47,7 @@ const ensureStoreForOwner = async (ownerUser) => {
     ownerId: ownerUser._id,
     sellerProfileId: sellerProfile?._id || null,
     name: fallbackName,
+    storeType: normalizeStoreType(sellerProfile?.storeType),
     isActive: true,
   });
 };

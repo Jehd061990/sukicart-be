@@ -13,6 +13,7 @@ const buyerRoutes = require("./routes/buyerRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const sessionRoutes = require("./routes/sessionRoutes");
 const inventoryRoutes = require("./routes/inventoryRoutes");
+const storeConfigRoutes = require("./routes/storeConfigRoutes");
 const { setupSwagger } = require("./config/swagger");
 
 const app = express();
@@ -37,6 +38,7 @@ app.use("/api/buyers", buyerRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/sessions", sessionRoutes);
 app.use("/api/inventory", inventoryRoutes);
+app.use("/api/store-config", storeConfigRoutes);
 
 app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });

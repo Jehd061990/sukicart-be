@@ -54,6 +54,22 @@ const geoLocationSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const posMetadataSchema = new mongoose.Schema(
+  {
+    prescriptionCode: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    scannedCode: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+  },
+  { _id: false },
+);
+
 const orderSchema = new mongoose.Schema(
   {
     items: {
@@ -118,6 +134,10 @@ const orderSchema = new mongoose.Schema(
       enum: ["ONLINE", "POS"],
       required: true,
       default: "ONLINE",
+    },
+    posMetadata: {
+      type: posMetadataSchema,
+      default: () => ({ prescriptionCode: "", scannedCode: "" }),
     },
     status: {
       type: String,

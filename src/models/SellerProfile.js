@@ -1,4 +1,7 @@
 const mongoose = require("mongoose");
+const { getSupportedStoreTypes } = require("../config/storeTypeConfig");
+
+const LEGACY_STORE_TYPES = ["Gulay", "Karne", "Isda", "Mixed"];
 
 const sellerProfileSchema = new mongoose.Schema(
   {
@@ -26,7 +29,7 @@ const sellerProfileSchema = new mongoose.Schema(
     },
     storeType: {
       type: String,
-      enum: ["Gulay", "Karne", "Isda", "Mixed"],
+      enum: [...getSupportedStoreTypes(), ...LEGACY_STORE_TYPES],
       required: true,
     },
     marketLocation: {

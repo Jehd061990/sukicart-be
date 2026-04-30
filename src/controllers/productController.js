@@ -1,7 +1,9 @@
 const mongoose = require("mongoose");
 const Product = require("../models/Product");
 const Inventory = require("../models/Inventory");
+const Store = require("../models/Store");
 const { withSellerScope } = require("../utils/tenantScope");
+const { getStoreTypeConfig } = require("../config/storeTypeConfig");
 
 const ALLOWED_CATEGORIES = ["vegetables", "meat", "fish"];
 const ALLOWED_STATUSES = ["active", "inactive"];
@@ -28,6 +30,27 @@ const normalizeCategory = (category) =>
 
 const normalizeStatus = (status) =>
   status ? String(status).toLowerCase() : null;
+
+const normalizeBarcode = (barcode) => String(barcode || "").trim();
+
+const normalizeExpiryDate = (expiryDate) => {
+  if (expiryDate === undefined) {
+    return undefined;
+  }
+
+  if (!expiryDate) {
+    return null;
+  }
+
+  const parsed = new Date(expiryDate);
+  if (Number.isNaN(parsed.getTime())) {
+    const error = new Error("expiryDate must be a valid date");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return parsed;
+};
 
 const applyStockStatusRule = (payload) => {
   const nextPayload = { ...payload };
@@ -77,6 +100,69 @@ const buildPaginatedResponse = ({ products, total, page, limit }) => ({
   },
 });
 
+const getTenantProductRules = async (sellerId) => {
+  const store = await Store.findOne({ ownerId: sellerId }).select(
+    "storeType configOverrides",
+  );
+  const storeConfig = getStoreTypeConfig(store?.storeType, store?.configOverrides);
+
+  return {
+    expiryTracking: Boolean(storeConfig.features?.expiryTracking),
+  };
+};
+
+const assertUniqueBarcodeForSeller = async ({ sellerId, barcode, excludeId }) => {
+  const normalized = normalizeBarcode(barcode);
+  if (!normalized) {
+    return;
+  }
+
+  const query = withSellerScope(sellerId, { barcode: normalized });
+  if (excludeId) {
+    query._id = { $ne: excludeId };
+  }
+
+  const existing = await Product.findOne(query).select("_id").lean();
+  if (existing) {
+    const error = new Error("Barcode already exists for this store");
+    error.statusCode = 409;
+    throw error;
+  }
+};
+
+const applyConfigDrivenProductRules = ({ payload, rules, isCreate, currentProduct }) => {
+  const nextPayload = { ...payload };
+
+  if (nextPayload.barcode !== undefined) {
+    nextPayload.barcode = normalizeBarcode(nextPayload.barcode);
+  }
+
+  if (nextPayload.expiryDate !== undefined) {
+    nextPayload.expiryDate = normalizeExpiryDate(nextPayload.expiryDate);
+  }
+
+  if (rules.expiryTracking) {
+    const effectiveExpiryDate =
+      nextPayload.expiryDate !== undefined
+        ? nextPayload.expiryDate
+        : currentProduct?.expiryDate || null;
+
+    if (isCreate && !effectiveExpiryDate) {
+      const error = new Error("expiryDate is required for this store type");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (!isCreate && nextPayload.expiryDate !== undefined && !effectiveExpiryDate) {
+      const error = new Error("expiryDate is required for this store type");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  return nextPayload;
+};
+
 const ensureInventoryRowsForProducts = async (products) => {
   if (!Array.isArray(products) || products.length === 0) {
     return;
@@ -123,7 +209,17 @@ const attachInventoryState = (products, inventoryRows) => {
 
 const addProduct = async (req, res) => {
   try {
-    const { name, price, stock, unit, category, image, status } = req.body;
+    const {
+      name,
+      price,
+      stock,
+      unit,
+      category,
+      image,
+      status,
+      barcode,
+      expiryDate,
+    } = req.body;
 
     if (
       !name ||
@@ -139,16 +235,28 @@ const addProduct = async (req, res) => {
 
     const normalizedCategory = validateCategory(normalizeCategory(category));
     const normalizedStatus = validateStatus(normalizeStatus(status));
+    const tenantRules = await getTenantProductRules(req.sellerId);
 
-    const payload = applyStockStatusRule({
-      name,
-      price,
-      stock,
-      unit,
-      category: normalizedCategory,
-      image,
-      status: normalizedStatus || "active",
+    const payload = applyConfigDrivenProductRules({
+      payload: applyStockStatusRule({
+        name,
+        price,
+        stock,
+        unit,
+        category: normalizedCategory,
+        image,
+        barcode,
+        expiryDate,
+        status: normalizedStatus || "active",
+        sellerId: req.sellerId,
+      }),
+      rules: tenantRules,
+      isCreate: true,
+    });
+
+    await assertUniqueBarcodeForSeller({
       sellerId: req.sellerId,
+      barcode: payload.barcode,
     });
 
     const product = await Product.create(payload);
@@ -165,7 +273,13 @@ const addProduct = async (req, res) => {
       product,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    if (error?.code === 11000 && error?.keyPattern?.barcode) {
+      return res
+        .status(409)
+        .json({ message: "Barcode already exists for this store" });
+    }
+
+    return res.status(error.statusCode || 500).json({ message: error.message });
   }
 };
 
@@ -182,7 +296,13 @@ const editProduct = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    const updates = applyStockStatusRule({ ...req.body });
+    const tenantRules = await getTenantProductRules(req.sellerId);
+    const updates = applyConfigDrivenProductRules({
+      payload: applyStockStatusRule({ ...req.body }),
+      rules: tenantRules,
+      isCreate: false,
+      currentProduct: product,
+    });
     delete updates.sellerId;
 
     if (updates.category !== undefined) {
@@ -192,6 +312,14 @@ const editProduct = async (req, res) => {
     if (updates.status !== undefined) {
       updates.status = validateStatus(normalizeStatus(updates.status));
     }
+
+    const effectiveBarcode =
+      updates.barcode !== undefined ? updates.barcode : product.barcode;
+    await assertUniqueBarcodeForSeller({
+      sellerId: req.sellerId,
+      barcode: effectiveBarcode,
+      excludeId: product._id,
+    });
 
     const updatedProduct = await Product.findOneAndUpdate(
       withSellerScope(req.sellerId, { _id: id }),
@@ -233,7 +361,13 @@ const editProduct = async (req, res) => {
       product: updatedProduct,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    if (error?.code === 11000 && error?.keyPattern?.barcode) {
+      return res
+        .status(409)
+        .json({ message: "Barcode already exists for this store" });
+    }
+
+    return res.status(error.statusCode || 500).json({ message: error.message });
   }
 };
 
@@ -275,7 +409,11 @@ const getAllProducts = async (req, res) => {
     }
 
     if (search) {
-      query.name = { $regex: String(search), $options: "i" };
+      const normalizedSearch = String(search).trim();
+      query.$or = [
+        { name: { $regex: normalizedSearch, $options: "i" } },
+        { barcode: { $regex: normalizedSearch, $options: "i" } },
+      ];
     }
 
     if (["SELLER", "POS"].includes(String(req.user?.role || "")) && req.sellerId) {
@@ -370,7 +508,11 @@ const getSellerProducts = async (req, res) => {
     }
 
     if (search) {
-      query.name = { $regex: String(search), $options: "i" };
+      const normalizedSearch = String(search).trim();
+      query.$or = [
+        { name: { $regex: normalizedSearch, $options: "i" } },
+        { barcode: { $regex: normalizedSearch, $options: "i" } },
+      ];
     }
 
     const candidateProducts = await Product.find(query).select("_id sellerId stock");

@@ -468,8 +468,14 @@ const swaggerDocument = {
           storeName: { type: "string", example: "Suki Gulayan" },
           storeType: {
             type: "string",
-            enum: ["Gulay", "Karne", "Isda", "Mixed"],
-            example: "Gulay",
+            enum: [
+              "grocery",
+              "pharmacy",
+              "hardware",
+              "convenience",
+              "retail",
+            ],
+            example: "grocery",
           },
           marketLocation: { type: "string", example: "Carbon Market" },
           exactAddress: {

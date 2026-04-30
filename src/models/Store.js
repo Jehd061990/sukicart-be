@@ -1,4 +1,8 @@
 const mongoose = require("mongoose");
+const {
+  STORE_TYPES,
+  getSupportedStoreTypes,
+} = require("../config/storeTypeConfig");
 
 const storeSchema = new mongoose.Schema(
   {
@@ -19,6 +23,16 @@ const storeSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+    },
+    storeType: {
+      type: String,
+      enum: getSupportedStoreTypes(),
+      default: STORE_TYPES.RETAIL,
+      index: true,
+    },
+    configOverrides: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
     },
     isActive: {
       type: Boolean,
