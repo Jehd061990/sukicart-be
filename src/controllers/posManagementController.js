@@ -85,6 +85,7 @@ const createPOS = async (req, res) => {
       username: normalizedUsername,
       password: resolvedPassword,
       role: ROLES.POS,
+      sellerId: owner._id,
       ownerId: owner._id,
       storeId: store._id,
       status: "active",

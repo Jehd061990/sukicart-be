@@ -4,6 +4,22 @@ const ROLES = require("../constants/roles");
 const { verifyAccessToken } = require("../utils/jwtTokens");
 const { touchSession } = require("../services/sessionService");
 
+const resolveSellerIdForUser = (user) => {
+  if (!user) {
+    return null;
+  }
+
+  if (user.role === ROLES.SELLER) {
+    return user.sellerId || user._id;
+  }
+
+  if (user.role === ROLES.POS) {
+    return user.sellerId || user.ownerId || null;
+  }
+
+  return null;
+};
+
 const requireAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -45,8 +61,20 @@ const requireAuth = async (req, res, next) => {
     }
 
     req.user = user;
+    const resolvedSellerId = resolveSellerIdForUser(user);
+
+    if (
+      [ROLES.SELLER, ROLES.POS].includes(user.role) &&
+      (!resolvedSellerId ||
+        String(decoded.sellerId || "") !== String(resolvedSellerId))
+    ) {
+      return res.status(401).json({ message: "Tenant validation failed" });
+    }
+
+    req.sellerId = resolvedSellerId ? String(resolvedSellerId) : null;
     req.auth = {
       sessionId: decoded.sessionId || null,
+      sellerId: decoded.sellerId || null,
     };
 
     await touchSession(decoded.sessionId || null);

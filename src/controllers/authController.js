@@ -17,16 +17,39 @@ const crypto = require("crypto");
 
 const registerAllowedRoles = ["BUYER", "SELLER", "RIDER"];
 
-const buildAuthPayload = (user, sessionId, nonce) => ({
+const resolveSellerIdForUser = (user) => {
+  if (!user) {
+    return null;
+  }
+
+  if (user.role === "SELLER") {
+    return user.sellerId || user._id;
+  }
+
+  if (user.role === "POS") {
+    return user.sellerId || user.ownerId || null;
+  }
+
+  return null;
+};
+
+const buildAuthPayload = (user, sessionId, nonce, sellerId) => ({
   id: user._id,
   role: user.role,
+  sellerId,
   tokenVersion: user.tokenVersion || 0,
   sessionId,
   nonce,
 });
 
 const buildAuthResponse = ({ user, message, sessionId, posUsage }) => {
-  const authPayload = buildAuthPayload(user, sessionId, crypto.randomUUID());
+  const sellerId = resolveSellerIdForUser(user);
+  const authPayload = buildAuthPayload(
+    user,
+    sessionId,
+    crypto.randomUUID(),
+    sellerId,
+  );
   const accessToken = generateAccessToken(authPayload);
   const refreshToken = generateRefreshToken(authPayload);
 
@@ -43,6 +66,7 @@ const buildAuthResponse = ({ user, message, sessionId, posUsage }) => {
       username: user.username,
       role: user.role,
       status: user.status,
+      sellerId,
     },
     sessionId,
     posUsage,
@@ -138,6 +162,7 @@ const login = async (req, res) => {
     const prePayload = {
       id: user._id,
       role: user.role,
+      sellerId: resolveSellerIdForUser(user),
       tokenVersion: user.tokenVersion || 0,
       sessionId: "pending",
     };

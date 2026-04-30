@@ -29,7 +29,7 @@ const router = express.Router();
 router.get(
   "/mine",
   protect,
-  authorizeRoles("BUYER", "SELLER", "RIDER", "ADMIN"),
+  authorizeRoles("BUYER", "SELLER", "POS", "RIDER", "ADMIN"),
   getMyOrders,
 );
 

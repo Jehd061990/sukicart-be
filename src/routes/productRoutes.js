@@ -1,5 +1,10 @@
 const express = require("express");
-const { protect, onlySeller } = require("../middleware/authMiddleware");
+const {
+  protect,
+  requireAuth,
+  onlySeller,
+  authorizeRoles,
+} = require("../middleware/authMiddleware");
 const {
   addProduct,
   editProduct,
@@ -10,8 +15,16 @@ const {
 
 const router = express.Router();
 
-router.get("/", getAllProducts);
-router.get("/mine", protect, onlySeller, getSellerProducts);
+router.get("/", (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return getAllProducts(req, res, next);
+  }
+
+  return requireAuth(req, res, () => getAllProducts(req, res, next));
+});
+router.get("/mine", protect, authorizeRoles("SELLER", "POS"), getSellerProducts);
 
 // Only SELLER can manage products
 router.post("/", protect, onlySeller, addProduct);

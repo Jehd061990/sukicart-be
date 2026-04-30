@@ -1,5 +1,7 @@
 const mongoose = require("mongoose");
 const Product = require("../models/Product");
+const Inventory = require("../models/Inventory");
+const { withSellerScope } = require("../utils/tenantScope");
 
 const ALLOWED_CATEGORIES = ["vegetables", "meat", "fish"];
 const ALLOWED_STATUSES = ["active", "inactive"];
@@ -75,6 +77,50 @@ const buildPaginatedResponse = ({ products, total, page, limit }) => ({
   },
 });
 
+const ensureInventoryRowsForProducts = async (products) => {
+  if (!Array.isArray(products) || products.length === 0) {
+    return;
+  }
+
+  const upserts = products.map((product) => ({
+    updateOne: {
+      filter: {
+        productId: product._id,
+        sellerId: product.sellerId,
+      },
+      update: {
+        $setOnInsert: {
+          stock: Number(product.stock || 0),
+          status: Number(product.stock || 0) <= 0 ? "inactive" : "active",
+        },
+      },
+      upsert: true,
+    },
+  }));
+
+  await Inventory.bulkWrite(upserts, { ordered: false });
+};
+
+const attachInventoryState = (products, inventoryRows) => {
+  const inventoryByProductId = new Map(
+    inventoryRows.map((row) => [String(row.productId), row]),
+  );
+
+  return products.map((product) => {
+    const inventoryRow = inventoryByProductId.get(String(product._id));
+    const plain = product.toObject ? product.toObject() : product;
+
+    return {
+      ...plain,
+      stock:
+        inventoryRow && Number.isFinite(Number(inventoryRow.stock))
+          ? Number(inventoryRow.stock)
+          : Number(plain.stock || 0),
+      status: inventoryRow?.status || plain.status,
+    };
+  });
+};
+
 const addProduct = async (req, res) => {
   try {
     const { name, price, stock, unit, category, image, status } = req.body;
@@ -102,10 +148,17 @@ const addProduct = async (req, res) => {
       category: normalizedCategory,
       image,
       status: normalizedStatus || "active",
-      sellerId: req.user._id,
+      sellerId: req.sellerId,
     });
 
     const product = await Product.create(payload);
+
+    await Inventory.create({
+      productId: product._id,
+      sellerId: req.sellerId,
+      stock: product.stock,
+      status: product.status,
+    });
 
     return res.status(201).json({
       message: "Product added successfully",
@@ -124,13 +177,9 @@ const editProduct = async (req, res) => {
       return res.status(400).json({ message: "Invalid product id" });
     }
 
-    const product = await Product.findById(id);
+    const product = await Product.findOne(withSellerScope(req.sellerId, { _id: id }));
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
-    }
-
-    if (String(product.sellerId) !== String(req.user._id)) {
-      return res.status(403).json({ message: "Forbidden: not your product" });
     }
 
     const updates = applyStockStatusRule({ ...req.body });
@@ -144,10 +193,40 @@ const editProduct = async (req, res) => {
       updates.status = validateStatus(normalizeStatus(updates.status));
     }
 
-    const updatedProduct = await Product.findByIdAndUpdate(id, updates, {
-      new: true,
-      runValidators: true,
-    });
+    const updatedProduct = await Product.findOneAndUpdate(
+      withSellerScope(req.sellerId, { _id: id }),
+      updates,
+      {
+        new: true,
+        runValidators: true,
+      },
+    );
+
+    if (!updatedProduct) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    if (updates.stock !== undefined || updates.status !== undefined) {
+      const inventoryUpdate = {};
+      if (updates.stock !== undefined) {
+        inventoryUpdate.stock = updates.stock;
+        inventoryUpdate.status =
+          Number(updates.stock) <= 0 ? "inactive" : "active";
+      }
+      if (updates.status !== undefined) {
+        inventoryUpdate.status = updates.status;
+      }
+
+      await Inventory.findOneAndUpdate(
+        withSellerScope(req.sellerId, { productId: id }),
+        inventoryUpdate,
+        {
+          new: true,
+          upsert: true,
+          runValidators: true,
+        },
+      );
+    }
 
     return res.status(200).json({
       message: "Product updated successfully",
@@ -166,16 +245,15 @@ const deleteProduct = async (req, res) => {
       return res.status(400).json({ message: "Invalid product id" });
     }
 
-    const product = await Product.findById(id);
+    const product = await Product.findOne(withSellerScope(req.sellerId, { _id: id }));
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    if (String(product.sellerId) !== String(req.user._id)) {
-      return res.status(403).json({ message: "Forbidden: not your product" });
-    }
-
-    await Product.findByIdAndDelete(id);
+    await Product.findOneAndDelete(withSellerScope(req.sellerId, { _id: id }));
+    await Inventory.findOneAndDelete(
+      withSellerScope(req.sellerId, { productId: id }),
+    );
 
     return res.status(200).json({ message: "Product deleted successfully" });
   } catch (error) {
@@ -188,10 +266,7 @@ const getAllProducts = async (req, res) => {
     const { category, search } = req.query;
     const { page, limit, skip } = parsePagination(req.query);
 
-    const query = {
-      status: "active",
-      stock: { $gt: 0 },
-    };
+    const query = {};
 
     const normalizedCategory = normalizeCategory(category);
     if (normalizedCategory) {
@@ -203,18 +278,68 @@ const getAllProducts = async (req, res) => {
       query.name = { $regex: String(search), $options: "i" };
     }
 
-    const [products, total] = await Promise.all([
-      Product.find(query)
+    if (["SELLER", "POS"].includes(String(req.user?.role || "")) && req.sellerId) {
+      Object.assign(query, withSellerScope(req.sellerId));
+    }
+
+    const candidateProducts = await Product.find(query).select("_id sellerId stock");
+
+    if (candidateProducts.length === 0) {
+      return res.status(200).json(
+        buildPaginatedResponse({
+          products: [],
+          total: 0,
+          page,
+          limit,
+        }),
+      );
+    }
+
+    await ensureInventoryRowsForProducts(candidateProducts);
+
+    const inventoryQuery = {
+      productId: { $in: candidateProducts.map((p) => p._id) },
+      status: "active",
+      stock: { $gt: 0 },
+    };
+
+    if (query.sellerId) {
+      inventoryQuery.sellerId = query.sellerId;
+    }
+
+    const allowedInventoryRows = await Inventory.find(inventoryQuery).select(
+      "productId stock status",
+    );
+    const allowedProductIds = allowedInventoryRows.map((row) => row.productId);
+
+    if (allowedProductIds.length === 0) {
+      return res.status(200).json(
+        buildPaginatedResponse({
+          products: [],
+          total: 0,
+          page,
+          limit,
+        }),
+      );
+    }
+
+    const [products, pageInventoryRows] = await Promise.all([
+      Product.find({ _id: { $in: allowedProductIds } })
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .populate("sellerId", "name email role"),
-      Product.countDocuments(query),
+      Inventory.find({ productId: { $in: allowedProductIds } }).select(
+        "productId stock status",
+      ),
     ]);
+
+    const hydratedProducts = attachInventoryState(products, pageInventoryRows);
+    const total = allowedProductIds.length;
 
     return res.status(200).json(
       buildPaginatedResponse({
-        products,
+        products: hydratedProducts,
         total,
         page,
         limit,
@@ -230,9 +355,7 @@ const getSellerProducts = async (req, res) => {
     const { category, status, search } = req.query;
     const { page, limit, skip } = parsePagination(req.query);
 
-    const query = {
-      sellerId: req.user._id,
-    };
+    const query = withSellerScope(req.sellerId);
 
     const normalizedCategory = normalizeCategory(category);
     if (normalizedCategory) {
@@ -250,14 +373,56 @@ const getSellerProducts = async (req, res) => {
       query.name = { $regex: String(search), $options: "i" };
     }
 
-    const [products, total] = await Promise.all([
-      Product.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit),
-      Product.countDocuments(query),
-    ]);
+    const candidateProducts = await Product.find(query).select("_id sellerId stock");
+
+    if (candidateProducts.length === 0) {
+      return res.status(200).json(
+        buildPaginatedResponse({
+          products: [],
+          total: 0,
+          page,
+          limit,
+        }),
+      );
+    }
+
+    await ensureInventoryRowsForProducts(candidateProducts);
+
+    const inventoryQuery = withSellerScope(req.sellerId, {
+      productId: { $in: candidateProducts.map((p) => p._id) },
+    });
+
+    if (normalizedStatus && normalizedStatus !== "all") {
+      inventoryQuery.status = normalizedStatus;
+    }
+
+    const allowedInventoryRows = await Inventory.find(inventoryQuery).select(
+      "productId stock status",
+    );
+
+    const allowedProductIds = allowedInventoryRows.map((row) => row.productId);
+    if (allowedProductIds.length === 0) {
+      return res.status(200).json(
+        buildPaginatedResponse({
+          products: [],
+          total: 0,
+          page,
+          limit,
+        }),
+      );
+    }
+
+    const products = await Product.find({ _id: { $in: allowedProductIds } })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const hydratedProducts = attachInventoryState(products, allowedInventoryRows);
+    const total = allowedProductIds.length;
 
     return res.status(200).json(
       buildPaginatedResponse({
-        products,
+        products: hydratedProducts,
         total,
         page,
         limit,

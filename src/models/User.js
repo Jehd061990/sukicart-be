@@ -34,6 +34,15 @@ const userSchema = new mongoose.Schema(
       default: "BUYER",
       required: true,
     },
+    sellerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required() {
+        return this.role === "SELLER" || this.role === "POS";
+      },
+      default: null,
+      index: true,
+    },
     ownerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -138,6 +147,18 @@ userSchema.index({
 });
 
 userSchema.pre("validate", function syncStatusAndIsActive(next) {
+  if (this.role === "SELLER" && !this.sellerId) {
+    this.sellerId = this._id;
+  }
+
+  if (this.role === "POS" && !this.sellerId && this.ownerId) {
+    this.sellerId = this.ownerId;
+  }
+
+  if (["SELLER", "POS"].includes(this.role) && !this.sellerId) {
+    return next(new Error("sellerId is required for SELLER and POS users"));
+  }
+
   if (this.isModified("status")) {
     this.isActive = this.status === "active";
   } else if (this.isModified("isActive")) {

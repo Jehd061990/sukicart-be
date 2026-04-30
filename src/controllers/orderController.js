@@ -120,7 +120,9 @@ const canTrackOrder = (order, user) => {
   const isAdmin = user.role === ROLES.ADMIN;
   const isBuyer = order.buyerId && String(order.buyerId) === String(user._id);
   const isSeller =
-    order.sellerId && String(order.sellerId) === String(user._id);
+    order.sellerId &&
+    String(order.sellerId) ===
+      String(user.role === ROLES.POS ? user.sellerId || user.ownerId : user._id);
   const isRider = order.riderId && String(order.riderId) === String(user._id);
 
   return isAdmin || isBuyer || isSeller || isRider;
@@ -238,7 +240,9 @@ const getMyOrders = async (req, res) => {
     if (req.user.role === ROLES.BUYER) {
       query.buyerId = req.user._id;
     } else if (req.user.role === ROLES.SELLER) {
-      query.sellerId = req.user._id;
+      query.sellerId = req.sellerId;
+    } else if (req.user.role === ROLES.POS) {
+      query.sellerId = req.sellerId;
     } else if (req.user.role === ROLES.RIDER) {
       query.riderId = req.user._id;
     } else if (req.user.role !== ROLES.ADMIN) {
@@ -376,7 +380,7 @@ const sellerAcceptOrder = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    if (String(order.sellerId) !== String(req.user._id)) {
+    if (String(order.sellerId) !== String(req.sellerId)) {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 
@@ -417,7 +421,7 @@ const sellerDeclineOrder = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    if (String(order.sellerId) !== String(req.user._id)) {
+    if (String(order.sellerId) !== String(req.sellerId)) {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 
@@ -566,7 +570,7 @@ const updateOrderStatus = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    if (String(order.sellerId) !== String(req.user._id)) {
+    if (String(order.sellerId) !== String(req.sellerId)) {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 
@@ -618,7 +622,7 @@ const sellerGetPickupQr = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    if (String(order.sellerId) !== String(req.user._id)) {
+    if (String(order.sellerId) !== String(req.sellerId)) {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 
@@ -731,7 +735,7 @@ const assignRiderToOrder = async (req, res) => {
     }
 
     const isAdmin = req.user.role === ROLES.ADMIN;
-    const isOrderSeller = String(order.sellerId) === String(req.user._id);
+    const isOrderSeller = String(order.sellerId) === String(req.sellerId);
     if (!isAdmin && !isOrderSeller) {
       return res
         .status(403)
@@ -878,7 +882,7 @@ const updateSellerLocation = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    if (String(order.sellerId) !== String(req.user._id)) {
+    if (String(order.sellerId) !== String(req.sellerId)) {
       return res.status(403).json({ message: "Forbidden: not your order" });
     }
 

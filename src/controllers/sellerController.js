@@ -107,8 +107,12 @@ const registerSeller = async (req, res) => {
       email: normalizedEmail,
       password,
       role: "SELLER",
+      sellerId: null,
       status: "pending",
     });
+
+    createdUser.sellerId = createdUser._id;
+    await createdUser.save();
 
     const dtiPermitFile = req.files?.dtiPermit?.[0];
     const validIdFile = req.files?.validId?.[0];

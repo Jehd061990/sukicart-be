@@ -23,6 +23,7 @@ const swaggerDocument = {
     { name: "Users" },
     { name: "POS" },
     { name: "Sessions" },
+    { name: "Inventory" },
     { name: "Orders" },
     { name: "Sellers" },
     { name: "Buyers" },
@@ -52,6 +53,10 @@ const swaggerDocument = {
             type: "string",
             enum: ["BUYER", "SELLER", "POS", "RIDER", "ADMIN"],
             example: "BUYER",
+          },
+          sellerId: {
+            type: ["string", "null"],
+            example: "6812f9fd4c7b9c90e8ce8f6b",
           },
           status: {
             type: "string",
@@ -228,6 +233,38 @@ const swaggerDocument = {
           data: {
             type: "array",
             items: { $ref: "#/components/schemas/DeviceSession" },
+          },
+        },
+      },
+      InventoryItem: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          sellerId: { type: "string" },
+          productId: { type: "string" },
+          stock: { type: "number", example: 42 },
+          status: { type: "string", enum: ["active", "inactive"] },
+          product: {
+            type: ["object", "null"],
+          },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      InventoryListResponse: {
+        type: "object",
+        properties: {
+          data: {
+            type: "array",
+            items: { $ref: "#/components/schemas/InventoryItem" },
+          },
+          pagination: {
+            type: "object",
+            properties: {
+              page: { type: "number" },
+              limit: { type: "number" },
+              total: { type: "number" },
+              totalPages: { type: "number" },
+            },
           },
         },
       },
@@ -1481,6 +1518,83 @@ const swaggerDocument = {
           401: { description: "Unauthorized" },
           403: { description: "Forbidden" },
           404: { description: "Session not found" },
+        },
+      },
+    },
+    "/api/inventory": {
+      get: {
+        tags: ["Inventory"],
+        summary: "List tenant inventory (SELLER or POS)",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: "Inventory list",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/InventoryListResponse" },
+              },
+            },
+          },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+        },
+      },
+    },
+    "/api/inventory/{productId}": {
+      get: {
+        tags: ["Inventory"],
+        summary: "Get inventory item for tenant product (SELLER or POS)",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "productId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          200: { description: "Inventory item" },
+          400: { description: "Invalid product id" },
+          401: { description: "Unauthorized" },
+          404: { description: "Inventory item not found" },
+        },
+      },
+      patch: {
+        tags: ["Inventory"],
+        summary: "Update inventory stock/status for tenant product (SELLER only)",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "productId",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  stock: { type: "number", example: 20 },
+                  status: {
+                    type: "string",
+                    enum: ["active", "inactive"],
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Inventory updated" },
+          400: { description: "Validation error" },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          404: { description: "Product not found" },
         },
       },
     },

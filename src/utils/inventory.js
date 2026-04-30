@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const Product = require("../models/Product");
+const Inventory = require("../models/Inventory");
 
 const mergeOrderItems = (rawItems) => {
   if (!Array.isArray(rawItems) || rawItems.length === 0) {
@@ -38,9 +39,92 @@ const mergeOrderItems = (rawItems) => {
 
 const safeReduceStock = async (session, items) => {
   for (const item of items) {
+    if (!item.sellerId) {
+      const error = new Error(
+        `sellerId is required for stock update on product ${item.productId}`,
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const inventoryQuery = {
+      productId: item.productId,
+      sellerId: item.sellerId,
+      stock: { $gte: item.quantity },
+    };
+
+    let updatedInventory = await Inventory.findOneAndUpdate(
+      inventoryQuery,
+      {
+        $inc: { stock: -item.quantity },
+      },
+      {
+        new: true,
+        session,
+      },
+    );
+
+    if (!updatedInventory) {
+      const productForBootstrap = await Product.findOne(
+        {
+          _id: item.productId,
+          sellerId: item.sellerId,
+        },
+        null,
+        { session },
+      );
+
+      if (productForBootstrap) {
+        await Inventory.findOneAndUpdate(
+          {
+            productId: item.productId,
+            sellerId: item.sellerId,
+          },
+          {
+            $setOnInsert: {
+              stock: Number(productForBootstrap.stock || 0),
+              status:
+                Number(productForBootstrap.stock || 0) <= 0
+                  ? "inactive"
+                  : "active",
+            },
+          },
+          {
+            upsert: true,
+            new: true,
+            session,
+          },
+        );
+
+        updatedInventory = await Inventory.findOneAndUpdate(
+          inventoryQuery,
+          {
+            $inc: { stock: -item.quantity },
+          },
+          {
+            new: true,
+            session,
+          },
+        );
+      }
+    }
+
+    if (!updatedInventory) {
+      const error = new Error(
+        `Insufficient stock or concurrent update for product ${item.productId}`,
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    updatedInventory.status =
+      Number(updatedInventory.stock) <= 0 ? "inactive" : "active";
+    await updatedInventory.save({ session });
+
     const updatedProduct = await Product.findOneAndUpdate(
       {
         _id: item.productId,
+        sellerId: item.sellerId,
         stock: { $gte: item.quantity },
       },
       {
@@ -59,6 +143,10 @@ const safeReduceStock = async (session, items) => {
       error.statusCode = 409;
       throw error;
     }
+
+    updatedProduct.status =
+      Number(updatedProduct.stock) <= 0 ? "inactive" : "active";
+    await updatedProduct.save({ session });
   }
 };
 

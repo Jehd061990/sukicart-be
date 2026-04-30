@@ -17,14 +17,12 @@ const createPOSOrder = async (req, res) => {
 
     const order = await runInTransaction(async (session) => {
       const mergedItems = mergeOrderItems(items);
-      const sellerIdForOrder =
-        req.user.role === ROLES.POS && req.user.ownerId
-          ? req.user.ownerId
-          : req.user._id;
+      const sellerIdForOrder = req.sellerId || req.user._id;
       const productIds = mergedItems.map((item) => item.productId);
-      const products = await Product.find({ _id: { $in: productIds } }).session(
-        session,
-      );
+      const products = await Product.find({
+        _id: { $in: productIds },
+        sellerId: sellerIdForOrder,
+      }).session(session);
 
       if (products.length !== productIds.length) {
         const error = new Error("One or more products not found");
@@ -54,6 +52,7 @@ const createPOSOrder = async (req, res) => {
 
         itemsForOrder.push({
           productId: product._id,
+          sellerId: sellerIdForOrder,
           name: product.name,
           unit: product.unit,
           price: product.price,
