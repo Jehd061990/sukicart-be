@@ -27,6 +27,8 @@ const STORE_TYPE_CONFIG = {
       showPrescriptionInput: false,
       showBarcodeScanner: true,
       showBulkQuantityActions: false,
+      scannerModes: ["hardware", "camera", "manual"],
+      defaultScannerMode: "hardware",
     },
   },
   [STORE_TYPES.PHARMACY]: {
@@ -49,6 +51,8 @@ const STORE_TYPE_CONFIG = {
       showPrescriptionInput: true,
       showBarcodeScanner: true,
       showBulkQuantityActions: false,
+      scannerModes: ["hardware", "camera", "manual"],
+      defaultScannerMode: "hardware",
     },
   },
   [STORE_TYPES.HARDWARE]: {
@@ -71,6 +75,8 @@ const STORE_TYPE_CONFIG = {
       showPrescriptionInput: false,
       showBarcodeScanner: true,
       showBulkQuantityActions: true,
+      scannerModes: ["hardware", "camera", "manual"],
+      defaultScannerMode: "hardware",
     },
   },
   [STORE_TYPES.CONVENIENCE]: {
@@ -93,6 +99,8 @@ const STORE_TYPE_CONFIG = {
       showPrescriptionInput: false,
       showBarcodeScanner: true,
       showBulkQuantityActions: false,
+      scannerModes: ["hardware", "camera", "manual"],
+      defaultScannerMode: "hardware",
     },
   },
   [STORE_TYPES.RETAIL]: {
@@ -115,6 +123,8 @@ const STORE_TYPE_CONFIG = {
       showPrescriptionInput: false,
       showBarcodeScanner: false,
       showBulkQuantityActions: false,
+      scannerModes: ["manual"],
+      defaultScannerMode: "manual",
     },
   },
 };
