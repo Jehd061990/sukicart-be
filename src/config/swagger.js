@@ -22,6 +22,7 @@ const swaggerDocument = {
     { name: "Deliveries" },
     { name: "Users" },
     { name: "POS" },
+    { name: "Sessions" },
     { name: "Orders" },
     { name: "Sellers" },
     { name: "Buyers" },
@@ -49,7 +50,7 @@ const swaggerDocument = {
           email: { type: "string", example: "jane@example.com" },
           role: {
             type: "string",
-            enum: ["BUYER", "SELLER", "RIDER", "ADMIN"],
+            enum: ["BUYER", "SELLER", "POS", "RIDER", "ADMIN"],
             example: "BUYER",
           },
           status: {
@@ -75,10 +76,29 @@ const swaggerDocument = {
       },
       LoginRequest: {
         type: "object",
-        required: ["email", "password"],
+        required: ["identifier", "password"],
         properties: {
-          email: { type: "string", example: "jane@example.com" },
+          identifier: {
+            type: "string",
+            example: "jane@example.com",
+            description: "Email or POS username",
+          },
           password: { type: "string", example: "secret123" },
+          deviceId: {
+            type: "string",
+            example: "7f90f4a5-1dad-4c6d-b8d2-f2f17b28620f",
+          },
+          deviceName: {
+            type: "string",
+            example: "Cashier Tablet 1",
+          },
+        },
+      },
+      POSUsage: {
+        type: "object",
+        properties: {
+          active: { type: "number", example: 1 },
+          total: { type: "number", example: 3 },
         },
       },
       AuthSuccessResponse: {
@@ -98,6 +118,84 @@ const swaggerDocument = {
             example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
           },
           user: { $ref: "#/components/schemas/UserSummary" },
+          sessionId: {
+            type: ["string", "null"],
+            example: "6812f9fd4c7b9c90e8ce8f6a",
+          },
+          posUsage: {
+            oneOf: [
+              { $ref: "#/components/schemas/POSUsage" },
+              { type: "null" },
+            ],
+          },
+        },
+      },
+      POSCreateRequest: {
+        type: "object",
+        required: ["posName"],
+        properties: {
+          posName: { type: "string", example: "Cashier 1" },
+          username: { type: "string", example: "cashier.one" },
+          password: { type: "string", example: "StrongPass!23" },
+          autoGeneratePassword: { type: "boolean", example: true },
+        },
+      },
+      DeviceSession: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "6812f9fd4c7b9c90e8ce8f6a" },
+          userId: { type: "string", example: "6812f9fd4c7b9c90e8ce8f6b" },
+          role: { type: "string", enum: ["SELLER", "POS", "ADMIN", "BUYER", "RIDER"] },
+          deviceId: { type: "string", example: "7f90f4a5-1dad-4c6d-b8d2-f2f17b28620f" },
+          deviceName: { type: "string", example: "Cashier Tablet 1" },
+          ipAddress: { type: "string", example: "127.0.0.1" },
+          lastActiveAt: { type: "string", format: "date-time" },
+          createdAt: { type: "string", format: "date-time" },
+        },
+      },
+      POSAccount: {
+        type: "object",
+        properties: {
+          id: { type: "string", example: "6812f9fd4c7b9c90e8ce8f6b" },
+          posName: { type: "string", example: "Cashier 1" },
+          username: { type: "string", example: "cashier.one" },
+          status: { type: "string", enum: ["active", "inactive", "pending"] },
+          isDeactivated: { type: "boolean", example: false },
+          createdAt: { type: "string", format: "date-time" },
+          activeSession: {
+            oneOf: [
+              { $ref: "#/components/schemas/DeviceSession" },
+              { type: "null" },
+            ],
+          },
+        },
+      },
+      POSCreateResponse: {
+        type: "object",
+        properties: {
+          message: { type: "string", example: "POS account created successfully" },
+          pos: { $ref: "#/components/schemas/POSAccount" },
+          generatedPassword: { type: "string", example: "R4nd0mPass!23" },
+          usage: { $ref: "#/components/schemas/POSUsage" },
+        },
+      },
+      POSListResponse: {
+        type: "object",
+        properties: {
+          usage: { $ref: "#/components/schemas/POSUsage" },
+          data: {
+            type: "array",
+            items: { $ref: "#/components/schemas/POSAccount" },
+          },
+        },
+      },
+      SessionListResponse: {
+        type: "object",
+        properties: {
+          data: {
+            type: "array",
+            items: { $ref: "#/components/schemas/DeviceSession" },
+          },
         },
       },
       Product: {
@@ -1134,7 +1232,7 @@ const swaggerDocument = {
     "/api/pos/orders": {
       post: {
         tags: ["POS"],
-        summary: "Create POS order (SELLER only)",
+        summary: "Create POS order (SELLER or POS)",
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -1158,6 +1256,132 @@ const swaggerDocument = {
           403: { description: "Forbidden" },
           404: { description: "Product not found" },
           500: { description: "Server error" },
+        },
+      },
+    },
+    "/api/pos/create": {
+      post: {
+        tags: ["POS"],
+        summary: "Create POS account (SELLER only)",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/POSCreateRequest" },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: "POS account created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/POSCreateResponse" },
+              },
+            },
+          },
+          400: { description: "Validation error" },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          409: { description: "Slot limit or duplicate username" },
+          500: { description: "Server error" },
+        },
+      },
+    },
+    "/api/pos/list": {
+      get: {
+        tags: ["POS"],
+        summary: "List POS accounts and usage (SELLER only)",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: "POS account list",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/POSListResponse" },
+              },
+            },
+          },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          500: { description: "Server error" },
+        },
+      },
+    },
+    "/api/pos/{id}": {
+      delete: {
+        tags: ["POS"],
+        summary: "Deactivate POS account (SELLER only)",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          200: {
+            description: "POS deactivated",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/MessageResponse" },
+              },
+            },
+          },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          404: { description: "POS account not found" },
+          500: { description: "Server error" },
+        },
+      },
+    },
+    "/api/sessions": {
+      get: {
+        tags: ["Sessions"],
+        summary: "List active sessions (SELLER or POS)",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: {
+            description: "Active session list",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/SessionListResponse" },
+              },
+            },
+          },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+        },
+      },
+    },
+    "/api/sessions/{id}": {
+      delete: {
+        tags: ["Sessions"],
+        summary: "Force logout a session (SELLER or POS own session)",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        responses: {
+          200: {
+            description: "Session revoked",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/MessageResponse" },
+              },
+            },
+          },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          404: { description: "Session not found" },
         },
       },
     },

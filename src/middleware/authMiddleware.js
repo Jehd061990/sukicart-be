@@ -1,6 +1,8 @@
 const User = require("../models/User");
+const Session = require("../models/Session");
 const ROLES = require("../constants/roles");
 const { verifyAccessToken } = require("../utils/jwtTokens");
+const { touchSession } = require("../services/sessionService");
 
 const requireAuth = async (req, res, next) => {
   try {
@@ -12,6 +14,20 @@ const requireAuth = async (req, res, next) => {
 
     const token = authHeader.split(" ")[1];
     const decoded = verifyAccessToken(token);
+
+    if (decoded.sessionId) {
+      const sessionDoc = await Session.findById(decoded.sessionId).select(
+        "_id revokedAt userId",
+      );
+
+      if (!sessionDoc || sessionDoc.revokedAt) {
+        return res.status(401).json({ message: "Session expired or revoked" });
+      }
+
+      if (String(sessionDoc.userId) !== String(decoded.id)) {
+        return res.status(401).json({ message: "Session validation failed" });
+      }
+    }
 
     const user = await User.findById(decoded.id).select("-password");
     if (!user) {
@@ -29,6 +45,11 @@ const requireAuth = async (req, res, next) => {
     }
 
     req.user = user;
+    req.auth = {
+      sessionId: decoded.sessionId || null,
+    };
+
+    await touchSession(decoded.sessionId || null);
     next();
   } catch (error) {
     return res.status(401).json({ message: "Not authorized, invalid token" });
@@ -49,6 +70,7 @@ const authorizeRoles = (...allowedRoles) => {
 };
 
 const onlySeller = authorizeRoles(ROLES.SELLER);
+const onlyPOS = authorizeRoles(ROLES.POS);
 const onlyBuyer = authorizeRoles(ROLES.BUYER);
 const onlyRider = authorizeRoles(ROLES.RIDER);
 const requireAdmin = authorizeRoles(ROLES.ADMIN);
@@ -63,6 +85,7 @@ module.exports = {
   protect,
   authorizeRoles,
   onlySeller,
+  onlyPOS,
   onlyBuyer,
   onlyRider,
   onlyAdmin,

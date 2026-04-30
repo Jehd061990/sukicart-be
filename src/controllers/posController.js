@@ -1,5 +1,6 @@
 const Product = require("../models/Product");
 const Order = require("../models/Order");
+const ROLES = require("../constants/roles");
 const {
   mergeOrderItems,
   safeReduceStock,
@@ -16,6 +17,10 @@ const createPOSOrder = async (req, res) => {
 
     const order = await runInTransaction(async (session) => {
       const mergedItems = mergeOrderItems(items);
+      const sellerIdForOrder =
+        req.user.role === ROLES.POS && req.user.ownerId
+          ? req.user.ownerId
+          : req.user._id;
       const productIds = mergedItems.map((item) => item.productId);
       const products = await Product.find({ _id: { $in: productIds } }).session(
         session,
@@ -34,7 +39,7 @@ const createPOSOrder = async (req, res) => {
       for (const mergedItem of mergedItems) {
         const product = productById.get(String(mergedItem.productId));
 
-        if (String(product.sellerId) !== String(req.user._id)) {
+        if (String(product.sellerId) !== String(sellerIdForOrder)) {
           const error = new Error(
             `Forbidden: product ${product.name} does not belong to this seller`,
           );
@@ -67,7 +72,7 @@ const createPOSOrder = async (req, res) => {
             buyerId: null,
             type: "POS",
             status: "pending",
-            sellerId: req.user._id,
+            sellerId: sellerIdForOrder,
           },
         ],
         { session },

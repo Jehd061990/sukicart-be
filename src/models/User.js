@@ -15,6 +15,13 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    username: {
+      type: String,
+      lowercase: true,
+      trim: true,
+      sparse: true,
+      unique: true,
+    },
     password: {
       type: String,
       required: true,
@@ -23,9 +30,38 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["ADMIN", "SELLER", "BUYER", "RIDER"],
+      enum: ["ADMIN", "SELLER", "POS", "BUYER", "RIDER"],
       default: "BUYER",
       required: true,
+    },
+    ownerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
+    storeId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Store",
+      default: null,
+      index: true,
+    },
+    posMeta: {
+      posName: {
+        type: String,
+        default: "",
+        trim: true,
+      },
+      isPOSAccount: {
+        type: Boolean,
+        default: false,
+        index: true,
+      },
+      isDeactivated: {
+        type: Boolean,
+        default: false,
+        index: true,
+      },
     },
     status: {
       type: String,
@@ -92,6 +128,13 @@ userSchema.index({
   role: 1,
   "riderMeta.isOnline": 1,
   "riderMeta.isAvailable": 1,
+});
+
+userSchema.index({
+  ownerId: 1,
+  role: 1,
+  "posMeta.isPOSAccount": 1,
+  "posMeta.isDeactivated": 1,
 });
 
 userSchema.pre("validate", function syncStatusAndIsActive(next) {
