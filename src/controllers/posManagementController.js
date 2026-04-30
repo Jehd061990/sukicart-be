@@ -205,8 +205,128 @@ const deactivatePOS = async (req, res) => {
   }
 };
 
+const updatePOS = async (req, res) => {
+  try {
+    const owner = req.user;
+    const posId = req.params.id;
+    const { posName, username, password } = req.body;
+
+    const posUser = await User.findOne({
+      _id: posId,
+      ownerId: owner._id,
+      role: ROLES.POS,
+      "posMeta.isPOSAccount": true,
+    }).select("+password");
+
+    if (!posUser) {
+      return res.status(404).json({ message: "POS account not found" });
+    }
+
+    const hasPosName = typeof posName === "string" && String(posName).trim();
+    const hasUsername = typeof username === "string" && String(username).trim();
+    const hasPassword = typeof password === "string" && String(password).trim();
+
+    if (!hasPosName && !hasUsername && !hasPassword) {
+      return res.status(400).json({
+        message: "Provide at least one field to update: posName, username, or password",
+      });
+    }
+
+    if (hasPosName) {
+      const normalizedPosName = String(posName).trim();
+      posUser.name = normalizedPosName;
+      posUser.posMeta.posName = normalizedPosName;
+    }
+
+    if (hasUsername) {
+      const normalizedUsername = normalizeUsername(username);
+      if (!normalizedUsername) {
+        return res.status(400).json({ message: "username is invalid" });
+      }
+
+      const duplicate = await User.findOne({
+        _id: { $ne: posUser._id },
+        username: normalizedUsername,
+      });
+
+      if (duplicate) {
+        return res.status(409).json({ message: "Username is already in use" });
+      }
+
+      posUser.username = normalizedUsername;
+    }
+
+    if (hasPassword) {
+      const normalizedPassword = String(password);
+      if (normalizedPassword.length < 6) {
+        return res.status(400).json({ message: "password must be at least 6 characters" });
+      }
+
+      posUser.password = normalizedPassword;
+    }
+
+    await posUser.save();
+
+    return res.status(200).json({
+      message: "POS account updated successfully",
+      pos: {
+        id: posUser._id,
+        posName: posUser.posMeta?.posName || posUser.name,
+        username: posUser.username,
+        status: posUser.status,
+        isDeactivated: posUser.posMeta?.isDeactivated || false,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+const upgradePOSSlots = async (req, res) => {
+  try {
+    const owner = req.user;
+    const { additionalSlots } = req.body;
+
+    const parsedAdditionalSlots = Number(additionalSlots);
+    if (
+      !Number.isInteger(parsedAdditionalSlots) ||
+      parsedAdditionalSlots <= 0 ||
+      parsedAdditionalSlots > 100
+    ) {
+      return res.status(400).json({
+        message: "additionalSlots must be an integer between 1 and 100",
+      });
+    }
+
+    const store = await ensureStoreForOwner(owner);
+    const subscription = await ensurePOSSubscriptionForOwner(owner, store);
+
+    subscription.totalSlots += parsedAdditionalSlots;
+    await subscription.save();
+
+    const activeUsage = await getPOSUsage(owner._id);
+
+    return res.status(200).json({
+      message: `Subscription updated. ${parsedAdditionalSlots} POS slot(s) added successfully.`,
+      subscription: {
+        totalSlots: subscription.totalSlots,
+        loginPolicy: subscription.loginPolicy,
+      },
+      usage: {
+        active: activeUsage,
+        total: subscription.totalSlots,
+      },
+      note: "This endpoint simulates a successful subscription upgrade. Connect payment provider for production billing.",
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+
 module.exports = {
   createPOS,
   listPOS,
   deactivatePOS,
+  updatePOS,
+  upgradePOSSlots,
 };

@@ -140,6 +140,39 @@ const swaggerDocument = {
           autoGeneratePassword: { type: "boolean", example: true },
         },
       },
+      POSUpdateRequest: {
+        type: "object",
+        properties: {
+          posName: { type: "string", example: "Cashier 2" },
+          username: { type: "string", example: "cashier.two" },
+          password: { type: "string", example: "NewPass!123" },
+        },
+      },
+      UpgradePOSSlotsRequest: {
+        type: "object",
+        required: ["additionalSlots"],
+        properties: {
+          additionalSlots: { type: "number", example: 2 },
+        },
+      },
+      UpgradePOSSlotsResponse: {
+        type: "object",
+        properties: {
+          message: { type: "string" },
+          subscription: {
+            type: "object",
+            properties: {
+              totalSlots: { type: "number", example: 5 },
+              loginPolicy: {
+                type: "string",
+                enum: ["REJECT", "INVALIDATE_OLDEST"],
+              },
+            },
+          },
+          usage: { $ref: "#/components/schemas/POSUsage" },
+          note: { type: "string" },
+        },
+      },
       DeviceSession: {
         type: "object",
         properties: {
@@ -1309,7 +1342,73 @@ const swaggerDocument = {
         },
       },
     },
+    "/api/pos/subscription/upgrade": {
+      post: {
+        tags: ["POS"],
+        summary: "Upgrade POS subscription slots (SELLER only)",
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/UpgradePOSSlotsRequest" },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: "POS slots upgraded",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/UpgradePOSSlotsResponse" },
+              },
+            },
+          },
+          400: { description: "Validation error" },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          500: { description: "Server error" },
+        },
+      },
+    },
     "/api/pos/{id}": {
+      put: {
+        tags: ["POS"],
+        summary: "Edit POS account fields (SELLER only)",
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/POSUpdateRequest" },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: "POS account updated",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/MessageResponse" },
+              },
+            },
+          },
+          400: { description: "Validation error" },
+          401: { description: "Unauthorized" },
+          403: { description: "Forbidden" },
+          404: { description: "POS account not found" },
+          409: { description: "Username already in use" },
+          500: { description: "Server error" },
+        },
+      },
       delete: {
         tags: ["POS"],
         summary: "Deactivate POS account (SELLER only)",

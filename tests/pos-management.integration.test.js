@@ -191,4 +191,58 @@ describe("POS management and session endpoints", () => {
 
     expect(forbiddenRes.statusCode).toBe(403);
   });
+
+  it("updates POS profile/credentials and upgrades POS slot subscription", async () => {
+    const { accessToken } = await createSellerAndLogin();
+
+    const createPOSRes = await request(app)
+      .post("/api/pos/create")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({
+        posName: "Cashier 4",
+        username: "cashier.four",
+        password: "PosPass123!",
+      });
+
+    expect(createPOSRes.statusCode).toBe(201);
+    const posUserId = createPOSRes.body.pos.id;
+
+    const updateRes = await request(app)
+      .put(`/api/pos/${posUserId}`)
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({
+        posName: "Cashier Four",
+        username: "cashier.4",
+        password: "NewPosPass123!",
+      });
+
+    expect(updateRes.statusCode).toBe(200);
+
+    const oldLoginRes = await request(app).post("/api/auth/login").send({
+      identifier: "cashier.four",
+      password: "PosPass123!",
+      deviceId: "pos-device-old",
+    });
+
+    expect(oldLoginRes.statusCode).toBe(401);
+
+    const newLoginRes = await request(app).post("/api/auth/login").send({
+      identifier: "cashier.4",
+      password: "NewPosPass123!",
+      deviceId: "pos-device-new",
+    });
+
+    expect(newLoginRes.statusCode).toBe(200);
+
+    const upgradeRes = await request(app)
+      .post("/api/pos/subscription/upgrade")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({
+        additionalSlots: 2,
+      });
+
+    expect(upgradeRes.statusCode).toBe(200);
+    expect(upgradeRes.body.subscription.totalSlots).toBe(5);
+    expect(upgradeRes.body.usage.total).toBe(5);
+  });
 });
